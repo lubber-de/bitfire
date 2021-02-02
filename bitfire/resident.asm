@@ -101,42 +101,50 @@ link_decomp_under_io
 }
 
 !if BITFIRE_LOADER = 1 {
-		;XXX TODO filenum as ZP addr could be saved for 1 byte extra code here
 		;XXX we do not wait for the floppy to be idle, as we waste enough time with depacking or the fallthrough on load_raw to have an idle floppy
 
-bitfire_send_byte_
-		sta .filenum			;save value
-		lda #$ef
-		sec				;on first run we fall through bcc and thus end up with carry set and $0f after adc -> with eor #$30 we end up with $3f, so nothing happens on the first $dd02 write
-.bit_loop
-		bcc +
-		adc #$1f			;on all other rounds carry is cleared here
-+
-		eor #$30			;flip bit 5 and toggle bite 4
-		sta $dd02
-		and #$1f			;clear bit
-		pha				;slow down, this costs two extra bytes here, but saves 8 bytes on drive-side
-		pla
-		ror <.filenum			;fetch next bit from filenumber and waste cycles
-		bne .bit_loop			;last bit?
+;bitfire_send_byte_
+;		sta .filenum			;save value
+;		;lda #$ff			;but without eor maybe different?
+;		lda #$ef
+;		;tax
+;		sec				;on first run we fall through bcc and thus end up with carry set and $0f after adc -> with eor #$30 we end up with $3f, so nothing happens on the first $dd02 write
+;.bit_loop
+;		bcc +
+;		;ieor also preserves carry, and no need to to the adc and overflow magic to keep it, startvalue would be $2f then? but adc woudl be more charming as we could start with $ff and do a tax
+;		;but eor sucks, as ones get shifted into filename then later on
+;		;adc #$0f			;on all other rounds carry is cleared here
+;		adc #$1f
+;+
+;		eor #$30			;flip bit 5 and toggle bite 4
+;		sta $dd02
+;		;and #$2f
+;		and #$1f			;clear bit
+;		pha				;slow down, this costs two extra bytes here, but saves 8 bytes on drive-side
+;		pla				;XXX TODO another 3 bytes would fir for slow down
+;		ror <.filenum			;fetch next bit from filenumber and waste cycles
+;		bne .bit_loop			;last bit?
+						;carry is set here, important for entering receive loop
 						;this all could be done shorter (save on the eor #$30 and invert on floppy side), but this way we save a ldx #$ff later on, and we do not need to reset $dd02 to a sane state after transmission, leaving it at $1f is just fine. So it is worth.
 
-;bitfire_send_byte_
-;		sta <.filenum
-;		ldx #$08
-;-
-;		lda $dd02
-;		and #$1f
-;		lsr <.filenum
-;		bcs +
-;		ora #$20
-;+
-;		eor #$10
-;		pha
-;		pla
-;		sta $dd02
-;		dex
-;		bpl -
+		;try again to swap bits, but do no eor #$30 but eor $20 here only, rest of the eor should happen on driveside, so we end with a sane $dd02 value taht is good for the adc $dd00?
+		;
+
+bitfire_send_byte_
+		;one byte longer, but saves us teh ldx #$ff later on on depacking
+		sta <.filenum
+		ldx #$08			;do 9 runs to end up with a sane value ($1f) and waste a bit of time after filename is sent to give floppy time to enter busy mode
+		lda #$2f
+-
+		lsr <.filenum
+		bcs +
+		ora #$10
++
+		eor #$20
+		sta $dd02
+		and #$2f
+		dex
+		bpl -
 .poll_end
 		rts
 
@@ -219,7 +227,6 @@ bitfire_loadraw_
 .nibble		ora #$00
 .bitfire_block_addr = * + 1
 .store		sta $b00b,y
-		;XXX TODO first bits: asl rol rol -> nibble rest can be lsr'ed, then ora #$03 or and #$fc and ora/and?
 
 .get_entry
 		lax <BITFIRE_LAX_ADDR
@@ -231,8 +238,6 @@ bitfire_loadraw_
 
 !if >* != >.get_loop { !error "getloop code crosses page!" }
 ;XXX TODO in fact the branch can also take 4 cycles if needed, ora $dd00 - $3f,x wastes one cycle anyway
-
-;XXX TODO load_comp: load until barrier okay -> enter depacker mit Weiche -> init? -> continue? On block end: check barrier, if still okay, continue? -> several entry points im depacker, einer wäre besser
 
 }
 !if BITFIRE_DECOMP = 1 {
@@ -289,7 +294,7 @@ bitfire_lz_sector_ptr1	= * + 1
 		ldx #$00			;restore x = 0 again
 		ldy .lz_tmp			;restore regs + flags
 		pla
-		plp				;XXX TODO plp + rts = rti?!
+		plp				;XXX TODO plp + rts != rti :-( as pc is off by one
 }
 .lz_same_page
 !if BITFIRE_LOADER = 0 {
@@ -323,14 +328,14 @@ bitfire_decomp_
 		beq .loadcompd_entry
 	!if BITFIRE_FRAMEWORK = 1 {
 link_load_next_comp
-		lda #BITFIRE_LOAD_NEXT
+		lda #BITFIRE_LOAD_NEXT		;XXX TODO duplicate code
 link_load_comp
 	}
 bitfire_loadcomp_
 		jsr bitfire_send_byte_		;returns now with x = $ff
 		lda #$08			;enable pollblock/fetch_sector calls (php)
 		ldy #.lz_poll-.lz_skip_poll-2	;currently ldy #$0b
-		ldx #$ff			;force to load a new sector upon first read, first read is a bogus read and will be stored on lz_bits, second read is then the really needed data
+		;ldx #$ff			;force to load a new sector upon first read, first read is a bogus read and will be stored on lz_bits, second read is then the really needed data
 .loadcompd_entry
 		sta .lz_skip_fetch
 		sty .lz_skip_poll + 1
@@ -438,7 +443,7 @@ bitfire_lz_sector_ptr2	= * + 1			;Copy the literal data, forward or overlap is g
 
 		beq .lz_8_and_more		;0 + 8 bits to fetch, branch out before table lookup to save a few cycles and one byte in the table, also save complexity on the bitfetcher
 		tay
-		lda .lz_lentab,y
+		lda .lz_lentab,y		;XXX TODO can we in fact choose from either offset group? $80 exists twice in that tab :-(
 -						;same as above
 		asl .lz_bits			;XXX same code as above, so annoying :-(
 		bne *+5

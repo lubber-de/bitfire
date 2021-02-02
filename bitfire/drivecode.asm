@@ -12,7 +12,7 @@
 
 ;constants and config params
 .MEASURE_SECTOR_TIME	= 0
-.BITFIRE_BOGUS_READS	= 2
+.BITFIRE_BOGUS_READS	= 0;2
 .FORCE_LAST_BLOCK	= 1
 .STEPPING_SPEED		= $98
 .CHECKSUM_CONST1	= $05
@@ -177,7 +177,7 @@ ___			= 0
 .sector			= .zp_start + $59		;DS
 .temp			= .zp_start + $5a
 ;.file_descriptor	= .zp_start + $60
-;.load_addr		= .file_descriptor + 0		;2 bytes	-> make this overlap with .preamble? saves up storing? but ned to change layout first in d64write? XXX TODO
+;.load_addr		= .file_descriptor + 0		;2 bytes
 .file_index		= .zp_start + $68
 ;.file_size		= .file_descriptor + 2		;2 bytes
 ;.dir_first_block_pos	= .zp_start + $68		;2 bytes
@@ -249,13 +249,13 @@ ___			= 0
 
 ;           cycle
 ;bit rate   0         10        20        30        40        50        60        70        80        90        100       110       120       130       140       150       160
-;0          1111111111111111111111111111111122222222222222222222222222222222333333333333333333333333333333334444444444444444444444444444444455555555555555555555555555555555
+;0          1111111111111111111111111111111122222222222222222222222222222222333333333333333333333333333333334444444444444444444444444444444455555555555555555555555555555555	;after 10
 ;              1                       ............   2                                      3                                   4             v      5           |-
-;1          111111111111111111111111111111222222222222222222222222222222333333333333333333333333333333444444444444444444444444444444555555555555555555555555555555
+;1          111111111111111111111111111111222222222222222222222222222222333333333333333333333333333333444444444444444444444444444444555555555555555555555555555555	;after 8
 ;              1                       ............   2                              3                                   4             v      5           |-
-;2          11111111111111111111111111112222222222222222222222222222333333333333333333333333333344444444444444444444444444445555555555555555555555555555
+;2          11111111111111111111111111112222222222222222222222222222333333333333333333333333333344444444444444444444444444445555555555555555555555555555	;misses after 6 cycles
 ;              1                       ............   2                      3                                   4             v      5           |-
-;3          1111111111111111111111111122222222222222222222222222333333333333333333333333334444444444444444444444444455555555555555555555555555
+;3          1111111111111111111111111122222222222222222222222222333333333333333333333333334444444444444444444444444455555555555555555555555555		;misses bvs when delayed by 4 cycles
 ;              1                      .............   2              3                                   4             v      5           |-
 ; in fact this can jitter a lot, bvc can loop at cycle 0 if it misses at the ende and then there's up to 5 cycles delay (branch + fallthrough
 
@@ -274,12 +274,11 @@ ___			= 0
 ;29
 
 .chksum			eor #$00
-			eor $0101,x			;can be omitted then XXX TODO can be moved to .fives to eor things there, eor after each lda/adc? then it would work?
+			eor $0101,x
 			eor $0102,x
-.gcr_entry						;XXX TODO would be nice if loaded earlier
+.gcr_entry
 			sta <.chksum2 + 1
 ;13
-							;XXX TODO ldx $1c01, 3 cycles earlier, but costs 2 cycles on top later onearlier
 			lda $1c01			;44445555	second read
 			ldx #$0f			;ldx + sax can be moved after lda + eor?
 			sax <.fives + 1
@@ -290,10 +289,10 @@ ___			= 0
 			ldx #$03			;save another 2 cycles and use $0f
 .gcr_slow1		lda $1c01			;56666677		third read	;slow down by 6,12,18
 			sax <.sevens + 1		;------77		;encode first 7 with sixes and by that shrink 6table? and add it with sevens?
-			asr #$fc			;-566666-		;XXX TODO value $fc here, and later on sbx, could be reused? coudl also use -56666-- table
+			asr #$fc			;-566666-
 			tax
 
-.threes			lda <.tab00333330_hi		;ZP! XXX TODO This block can also moved above last lda $1c01? but read 3 skews then
+.threes			lda <.tab00333330_hi		;ZP!
 			adc .tab44444000_lo,y
 			pha
 .chksum2		eor #$00
@@ -310,41 +309,40 @@ ___			= 0
 			tay
 							;XXX TODO bit 2 can be used in original form
 			lda .tab00088888_lo,x		;XXX TODO could combine two tables (low + highnibbles) and separate here by and? but must be all other tables that are combined
-			ldx #$07			;if we could reuse $07 here too? not as much waste :-(
+			ldx #$07
 .sevens			adc .tab77700077_hi,y		;
 			pha
 ;21
 			lda $1c01			;11111222	fifth read
 			sax <.twos + 1
-			and #$f8			;could shift with asr and compress ones table?
-							;XXX TODO with shift, bit 2 of twos is in carry and coudl be added as +0 +4?
+			and #$f8			;XXX TODO could shift with asr and compress ones table?
+							;XXX TODO with shift, bit 2 of twos is in carry and could be added as +0 +4?
 			tay
-			ldx #$3e			;XXX TODO $3f? and have only 4x4 afterwards? no asr needed?
+			ldx #$3e
 ;13
+			;let's check out, on real hardware slower speedzones more and more miss reads if only 4 loop runs are given
+			bvs .read_loop
+			bvs .read_loop
+			bvs .read_loop
+			bvs .read_loop			;and use 2 bvs as safety zone? Would be pretty much save that it misses however, so need to find out
 			bvs .read_loop			;2 cycle jitter only
 			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
-			bvs .read_loop
+							;bail out here on zone 0
+			;those loop runs will be reduced one  per speedzone
+.bvs_01			bvs .read_loop
+							;here on zone 1
+.bvs_02			bvs .read_loop
+							;zone 2
+.bvs_03			bvs .read_loop
+							;zone 3
+			;10, 8, 6, 4
+			;if we run out of this loop, we have timed out and better reread, maybe the disc spins too slow yet?
 			jmp .read_sector		;took too long, retry
-
-			;save here to make next read happen earlier :-( also reuse 7 somehow :-(
 ;29
 .gcr_end
 			;Z-Flag = 1 on success, 0 on failure (wrong type)
 			jmp .read_sector_back
 			jmp .read_header_back
-
-			;XXX reuse X reg and bloat tab77 -> yet too expensive
 
 !ifdef .second_pass {
 	!warn $0100 - *, " bytes remaining in zeropage."
@@ -363,8 +361,7 @@ ___			= 0
 .tab02200222_lo
 .gcr_00
 			lda ($00,x)	;10
-			nop		;XXX TODO could do a nop zpx ($14) that takes 4 cycles
-			;nop		;XXX TODO remove a nop, somehow shoudl be enough
+			nop
 .gcr_20
 			lda ($00,x)	;8
 			nop
@@ -379,6 +376,7 @@ ___			= 0
 			;
 			;----------------------------------------------------------------------------------------------------
 .scramble_preamble
+			sty <.preamble_data + 0		;ack/status to set load addr, signal block ready
 -
 			lda <.preamble_data,x		;smaller this way, as lda $zp,x can be used now
 			and #$0f
@@ -390,7 +388,6 @@ ___			= 0
 			dex
 			bpl -
 			bmi .start_send
-							;XXX TODO use the two remaining bytes here
 .tab2_gap1
 			* = .tab02200222_lo + $22
 !ifdef .second_pass {
@@ -403,8 +400,6 @@ ___			= 0
 			; FRAGMENTS FROM SEEK CODE TO FILL UP GAPS
 			;
 			;----------------------------------------------------------------------------------------------------
-
-			;XXX TODO move seek together and place chunks of set bitrate here?
 .seek_
 			sec
 			sbc <.track		;how many tracks to go?
@@ -444,7 +439,6 @@ ___			= 0
 			bit $1c09
 			bmi *-3
 
-			;XXX TODO schwaulstepping
 			;jsr firststep -> sets how many steps still need to be taken
 			;send_data
 			;wait until counter underflows or already done
@@ -618,24 +612,25 @@ ___			= 0
 ;			bcc .bit1		;more bits to fetch?
 ;			sty $1800		;set busy bit
 ;
-			sta <.byte
 .lock
 			ldx $1800
 			bmi .lock
 .bits
 			cpx $1800
 			beq .bits
-			lax $1800
+			ldx $1800
 			bmi .lock
-			lsr
-			ror <.byte
+			cpx #$04
+			ror
+						;XXX TODO can waste anotehr 6 cycles here for spin down check, slower sending would be much appreciated
 			bcc .bits
+
+			sta <.byte
 
 			sty $1800		;set busy bit
 			lda <.byte
 
 
-			;XXX TODO do this once and check for timer, turn of motor in case it elapsed, else let it be turned on and save on spin up time
 			;----------------------------------------------------------------------------------------------------
 			;
 			; LOAD FILE / EXECUTE COMMAND, $00..$7f, $ef, $f0..$fe, $ff
@@ -738,7 +733,7 @@ ___			= 0
 			adc .dir_file_size,x
 			sta <.blocks + 0
 
-			;XXX TODO on very huge files, this could fail, as we overflow!!! but then again, fils are max $d000 in size due to i/o limitation?
+			;XXX TODO on very huge files, this could fail, as we overflow!!! but then again, files are max $d000 in size due to i/o limitation?
 			lda <.blocks + 1
 			adc .dir_file_size + 1,x
 			sta <.blocks + 1
@@ -806,7 +801,7 @@ ___			= 0
 			adc #BITFIRE_CONFIG_INTERLEAVE
 			cmp <.max_sectors
 			bcc +
-			;next revolutiona XXX nterleave 4 that is, other interleaves to be done
+								;next revolutiona
 !if BITFIRE_CONFIG_INTERLEAVE = 4 {
 			adc #$00				;increase
 			and #$03				;modulo 4
@@ -859,7 +854,7 @@ ___			= 0
 			adc #0			;a is 12, 11, 10 ...
 			eor #3			;a is 11, 12, 13 now
 						;XXX TODO this is the value that coul be directly fed into the shifting below :-(
-			cpy #18			;XXX TODO do a tay here and a tya later on, saves lda <.max_sectos and sbc #1
+			cpy #18
 			bcs +			;N = 0
 			adc #2			;or 15 if < track 18 -> N = 0
 +
@@ -870,40 +865,54 @@ ___			= 0
 !if (.ms_back2 & $ff00) != (.ms_back3 & $ff00) { !error ".ms_back labels not in same page" }
 !if (.ms_back1 & $ff00) != (.ms_back3 & $ff00) { !error ".ms_back labels not in same page" }
 
-			sbc #$01		;carry still set depending on cpy #18
-
-			lsr			;shift to right position
-			ror
-			ror
-			lsr
+			sbc #$11		;carry still set depending on cpy #18
+			asl
+			sta .br0 + 1
+			asl			;shift to right position
+			asl
+			asl
+			asl
+						;XXX TODO, all other bits cleared, can use and + ora now?
 			ora #$0f		;preserve led, motor and stepper-bits
 			tax                     ;0xx01111
 			lda $1c00
 			ora #$60		;x11xxxxx new bitrate bits to be set
 			sax $1c00		;merge
+
+			ldy #$a9		;restore 3 bvs
+			sty .bvs_01
+			sty .bvs_02
+			sty .bvs_03
+
+			ldy #$70
+.br0			bne *
+			sty .bvs_03
+			sty .bvs_02
+			sty .bvs_01
 			txa
 
 			ldy #$4c		;common values to set up for 1, 2, 3
 			ldx #>.gcr_40		;should be $02
 
 			and #$60
-			beq .bitrate_3		;a bit pity that this needs another bunch of branches :-( TODO
+			beq .bitrate_3		;a = $00		;a bit pity that this needs another bunch of branches :-( TODO
 			cmp #$40
-			beq .bitrate_1
-			bcc .bitrate_2
+			beq .bitrate_1		;a = $40
+			lda #<.gcr_20		;03
+			bcc .bitrate_2		;a = $20
+						;a = $60
 .bitrate_0
 			ldy #$ad
 			lda #$01
 			ldx #$1c
 			top
 .bitrate_1
-			lda #<.gcr_40
-			top
+			lda #<.gcr_40		;06	XXX TODO 0,3,6 -> derivate from bitrate? -> asl + self?
+			;top
 .bitrate_2
-			lda #<.gcr_20
-			top
+			;top
 .bitrate_3
-			lda #<.gcr_00
+			;lda #<.gcr_00		;00
 
 			sty .gcr_slow1 + 0
 			sta .gcr_slow1 + 1
@@ -1240,8 +1249,7 @@ ___			= 0
 } else {
 .not_first
 }
-			sty <.preamble_data + 0		;ack/status to set load addr, signal block ready
-			;XXX TODO could set barrier one earlier, but would need to set x in depacker :-(
+			;sty <.preamble_data + 0	;moved to .scramble_preamble to save bytes
 
 			ldx #$03 + BITFIRE_DECOMP	;with or without barrier, depending on stand-alone loader or not
 			stx .pre_len + 1		;set preamble size
@@ -1262,7 +1270,6 @@ ___			= 0
 ;			tsx
 ;			bne -
 
-;XXX TODO place side infotag elsewhere, so that 64 entry per page are possible?
 
 ;tables with possible offsets
 .tab11111000_hi		= .tables + $00
@@ -1327,7 +1334,7 @@ ___			= 0
 ;                        !byte $70, ___, $0d, $05, $0f, $00, $09, $01, $60, $06, $0c, $04, $07, $02, $08, ___
 ;                        !byte ___, $60, $40, $c0, ___, ___, ___, ___, $b0, $0e, $0f, $07, $0a, $0a, $0b, $03
 ;                        !byte $30, ___, $0d, $05, $0b, $00, $09, $01, $20, $06, $0c, $04, $03, $02, $08, ___
-;                        !byte ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___			;XXX TODO place ser2bin here and use free space for dir_sect_load?
+;                        !byte ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___, ___
 ;                        !byte $50, ___, ___, ___, $0d, ___, ___, ___, $40, ___, ___, ___, $05, ___, ___, ___
 ;                        !byte ___, $b0, $80, $a0, ___, ___, ___, ___, $80, $0e, $0f, $07, $00, $0a, $0b, $03
 ;                        !byte $10, ___, $0d, $05, $09, $00, $09, $01, $00, $06, $0c, $04, $01, $02, $08, ___
@@ -1335,7 +1342,6 @@ ___			= 0
 ;                        !byte $d0, ___, $0d, $05, $0c, $00, $09, $01, $c0, $06, $0c, $04, $04, $02, $08, ___
 ;                        !byte ___, $20, $00, ___, ___, ___, ___, ___, $a0, $0e, $0f, $07, $02, $0a, $0b, $03
 ;                        !byte $90, ___, $0d, $05, $08, $00, $09, $01, ___, $06, $0c, $04, ___, $02, $08, ___
-			;XXX TODO fill all gaps with junk
 }
 
 .drivecode_end
@@ -1345,7 +1351,6 @@ ___			= 0
 
 ;schnellerer xfer
 ;jmp ($1800) möglich?
-;XXX TODO mapping of last bits can also be directly added without lookup?! \o/
 
 ;if in carry: rol asl asl or ror lsr if $40?
 ;and #$04 or and #$40? would be bit 6
@@ -1353,15 +1358,6 @@ ___			= 0
 ;XXX TODO merge high and lownibbles in one table and separate by and #$0f, possible if we save data due to that and also cycles
 
 ;11111000 table fits into zp if compressed with asr #$f8, preamble then starts @ $89, zero bytes free then, but fits
-;21:49 <Krill> ah, das hab ich mit dem fadeout der led gekoppelt
-;21:49 <Krill> aber sanity checks, da gibt's mindestens noch sektor im richtigen bereich für die spur
-;21:54 <Krill> und ID wird auch gecheckt
-;22:07 <faker^OXY> gut, das kann ich noch spendieren
-;22:08 <faker^OXY> Mein Problem ist momentan eher aus der loop dann shcnell genug rauszukommen wenn ein neuer filename kommt, ich fürchte ich muss da nen echten Handshake einbauen, das kostet mich bytes auf c64-Seite :-(
-;22:12 <Krill> hmm, da gibt's keine toleranz?
-;22:13 <Krill> ich nehm auch noch so viele bits wie möglich nach der block-checksumme mit, die endet ja auf nem halben nibble, aber danach kommen garantieret 1010 (von der GCR-null)
-;22:13 <Krill> -e
-
 
 ;XXX TODO
 ;decode header_type too and against value -> full decode with last two bits!
