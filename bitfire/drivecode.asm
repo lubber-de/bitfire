@@ -1,7 +1,8 @@
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Much <3 goes to Krill for answering all the questions, giving very valueable hints, chats, ideas!!!
 ; Talking about bitorders for serial transfer, and sanity checks helped a lot!
-; Also Sparkle from Sparte is a good source of inspiration <3
+; Also Sparkle from Sparta is a good source of inspiration <3
+; Many thanks go out to THCM, Dano and doomed for all the testing <3
 ;--------------------------------------------------------------------------------------------------------------------------
 
 !src "config.inc"
@@ -12,7 +13,7 @@
 
 ;constants and config params
 .MEASURE_SECTOR_TIME	= 0
-.BITFIRE_BOGUS_READS	= 0;2
+.BOGUS_READS		= 0;2
 .FORCE_LAST_BLOCK	= 1
 .STEPPING_SPEED		= $98
 .CHECKSUM_CONST1	= $05
@@ -30,11 +31,11 @@
 .BLOCK_READY		= $08
 .IDLE			= $00
 
-.VIA2_LED_OFF		= $f7
-.VIA2_LED_ON		= $08
+.LED_OFF		= $f7
+.LED_ON			= $08
 
-.VIA2_MOTOR_OFF		= $fb
-.VIA2_MOTOR_ON		= $04
+.MOTOR_OFF		= $fb
+.MOTOR_ON		= $04
 
 .RESET_DRIVE		= $eaa0
 ___			= 0
@@ -99,8 +100,8 @@ ___			= 0
 			sta $1c0e
 			sta $180d		;clear all IRQ flags to ack possibly pending IRQs
 			sta $1c0d
-			lda #$c0
-			sta $1c0e
+;			lda #$c0
+;			sta $1c0e
 
 
 			;cli			;now it is save to allow interrupts again, as they won't happen anymore
@@ -156,8 +157,8 @@ ___			= 0
 !pseudopc .drivecode {
 .zp_start
 
-;gcr2bin
 
+;XXX TODO fill gaps with junk, remaining free zp bytes are zero else (enough zeroes there anyway due to wishlist
 .max_sectors		= .zp_start + $08		;maximum sectors on current track
 .dir_sector		= .zp_start + $10
 .blocks_on_list		= .zp_start + $11		;blocks tagged on wanted list
@@ -167,7 +168,7 @@ ___			= 0
 .filenum 		= .zp_start + $21
 .block_num		= .zp_start + $22
 .end_of_file		= .zp_start + $23
-.byte			= .zp_start + $28
+;.byte			= .zp_start + $28
 .dir_entry_num		= .zp_start + $29
 .blocks 		= .zp_start + $30		;2 bytes
 .wanted			= .zp_start + $3e		;21 bytes
@@ -178,11 +179,12 @@ ___			= 0
 .temp			= .zp_start + $5a
 ;.file_descriptor	= .zp_start + $60
 ;.load_addr		= .file_descriptor + 0		;2 bytes
-.file_index		= .zp_start + $68
 ;.file_size		= .file_descriptor + 2		;2 bytes
 ;.dir_first_block_pos	= .zp_start + $68		;2 bytes
 ;.dir_sector		= .zp_start + $64
 .track_frob		= .zp_start + $66
+.file_index		= .zp_start + $68
+;.free			) .zp_start + $69
 .is_loaded_track	= .zp_start + $6a
 .is_loaded_sector	= .zp_start + $6c
 .current_id1		= .zp_start + $70
@@ -207,6 +209,7 @@ ___			= 0
 .tab00333330_hi		= * + $00
 .tab05666660_lo		= * + $01
 
+;XXX REMOVE and use as free addrs, place junk there yet
 .timer_base 		= $829d
 .timer_0		= .timer_base + 3 * $30
 .timer_1		= .timer_base + 2 * $30
@@ -234,11 +237,6 @@ ___			= 0
                         !byte .fd, .fd, ___, ___, ___, $0d, 255, $05, ___, ___, ___, $00, ___, $09, ___, $01	;60
                         !byte ___, ___, ___, $06, ___, $0c, ___, $04, ___, ___, ___, $02, ___, $08		;70
 
-;.mintab_hi
-;			!byte >.timer_0
-;			!byte >.timer_1
-;			!byte >.timer_2
-;			!byte >.timer_3
 .preamble_data
 			!byte $00, $00, $00, $00, $00
 
@@ -344,6 +342,8 @@ ___			= 0
 			jmp .read_sector_back
 			jmp .read_header_back
 
+
+;XXX TODO fill up with junk?
 !ifdef .second_pass {
 	!warn $0100 - *, " bytes remaining in zeropage."
 }
@@ -361,7 +361,8 @@ ___			= 0
 .tab02200222_lo
 .gcr_00
 			lda ($00,x)	;10
-			nop
+			nop		;XXX TODO add a nop here for thcms floppy?
+			nop		;XXX TODO add a nop here for thcms floppy?
 .gcr_20
 			lda ($00,x)	;8
 			nop
@@ -376,7 +377,6 @@ ___			= 0
 			;
 			;----------------------------------------------------------------------------------------------------
 .scramble_preamble
-			sty <.preamble_data + 0		;ack/status to set load addr, signal block ready
 -
 			lda <.preamble_data,x		;smaller this way, as lda $zp,x can be used now
 			and #$0f
@@ -557,7 +557,8 @@ ___			= 0
 			;carry still set/cleared from previous check
 			lax <.filenum
 			cmp #BITFIRE_REQ_DISC
-			bcc .load_file_
+			bcs *+5
+			jmp .load_file_		;XXX TODO bcc .load_file but bus_lock gets in our way, we should jmp there to keep distances short
 
 			eor .dir_diskside	;compare side info
 			bne .turn_disc		;still wrong side
@@ -575,65 +576,51 @@ ___			= 0
 			dec <.first_block	;-> $ff
 }
 			lda $1c00		;turn off LED
-			and #.VIA2_LED_OFF
+			and #.LED_OFF
 !if BITFIRE_CONFIG_MOTOR_ALWAYS_ON = 0 {
-			and #.VIA2_MOTOR_OFF
+			and #.MOTOR_OFF
 }
 			sta $1c00
-			;jmp .get_byte
 
 			;----------------------------------------------------------------------------------------------------
 			;
 			; RECEIVE/WAIT FOR A BYTE FROM HOST
 			;
 			;----------------------------------------------------------------------------------------------------
+
+.lock
+			ldx $1800		;optimize: ldx here
+			bmi *-3
 .get_byte
 			ldy #.BUSY		;enough time for signal to settle
 .get_byte_
-			lda #.IDLE | $80	;expect a whole new byte
+			lda #$80		;execpt a whole new byte and start with a free bus
 			sta $1800
-;.lock
-;			ldx $1800		;still locked?
-;			bmi .lock
-;.bit1
-;			cpx $1800		;wait for transition
-;			beq .bit1
-;			ldx $1800		;reread register
-;			bmi .lock		;is the bus locked via ATN? if so, wait
-;			cpx #$05		;nope, interpret bit
-;			ror			;and shift in
-;.bit2
-;			cpx $1800		;wait for next transition
-;			beq .bit2
-;			ldx $1800		;reread register
-;			cpx #$01		;nope, interpret bit
-;			ror			;and shift in
-;
-;			bcc .bit1		;more bits to fetch?
-;			sty $1800		;set busy bit
-;
-.lock
-			ldx $1800
-			bmi .lock
-.bits
-			cpx $1800
-			beq .bits
-			ldx $1800
-			bmi .lock
-			cpx #$04
-			ror
-						;XXX TODO can waste anotehr 6 cycles here for spin down check, slower sending would be much appreciated
-			bcc .bits
 
-			sta <.byte
+			ldx $1800		;sanity check, do only enter loop if $1800 = 0 and $dd02 = $3f, can happen on turndisk, $dd02 is $1f afterwards? (last bit is set in filename)
+			bne *-3
+.gloop
+.wait_bit1
+			cpx $1800		;wait for transition
+			beq .wait_bit1
+			ldx $1800		;reread register
+			bmi .lock		;is the bus locked via ATN? if so, wait
+			cpx #$05		;nope, interpret bit
+			ror			;and shift in
+.wait_bit2
+			cpx $1800		;wait for next transition
+			beq .wait_bit2
+			ldx $1800		;reread register
+			bmi .lock		;is the bus locked? XXX TODO can be omitted?
+			cpx #$01		;nope, interpret bit
+			ror			;and shift in
 
+			bcc .gloop		;more bits to fetch?
 			sty $1800		;set busy bit
-			lda <.byte
-
 
 			;----------------------------------------------------------------------------------------------------
 			;
-			; LOAD FILE / EXECUTE COMMAND, $00..$7f, $ef, $f0..$fe, $ff
+			; LOAD FILE / EXECUTE COMMAND, $00..$7f, $ef, $f0..$fd, $fe, $ff
 			; XXX TODO files up to $ee would be possible in theory, but more dir sectors would be needed
 			;
 			;----------------------------------------------------------------------------------------------------
@@ -648,16 +635,16 @@ ___			= 0
 			sta <.filenum		;set new filenum
 +
 			cmp #BITFIRE_REQ_DISC	;sets carry if so, used later on on bcs
-			lda #.VIA2_MOTOR_ON
+			lda #.MOTOR_ON
 !if BITFIRE_CONFIG_MOTOR_ALWAYS_ON = 0 {
-!if .BITFIRE_BOGUS_READS > 0 {
-			ldx #.BITFIRE_BOGUS_READS
+!if .BOGUS_READS > 0 {
+			ldx #.BOGUS_READS
 			stx <.bogus_reads
 }
 }
 			ora $1c00		;turn on motor (no matter if already on)
 			bcs +			;no LED during turn disc
-			ora #.VIA2_LED_ON
+			ora #.LED_ON
 +
 			sta $1c00
 
@@ -712,21 +699,17 @@ ___			= 0
 			;----------------------------------------------------------------------------------------------------
 
 .find_file_in_dir
-			;XXX TODO check if all values of dir_entry are zero, if so, EOF and idle
 			lda .dir_first_file_sector_index	;sectorindex of first file in dir (not sector number, but as if written with interleave = 1)
 			sta <.blocks + 1
 			lda .dir_first_block_pos		;pos in first sector where file starts
 			sta <.blocks + 0
 
 			ldy .dir_first_file_track		;track of first file in dir
-			lda #<.ms_back1				;first jump
-			jmp .set_max_sectors			;setup max_sectors
-.ms_back1
 			ldx #$00
 .next_dir_entry
 			;XXX TODO better do sum up all filesizes with 24 bit and then subtract sectors until block + 1 and block + 2 is reached?
 			cpx <.dir_entry_num
-			beq .found_file
+			beq .next_track
 
 			lda <.blocks + 0
 			sec
@@ -738,7 +721,11 @@ ___			= 0
 			adc .dir_file_size + 1,x
 			sta <.blocks + 1
 .next_track
-.ms_back2
+			jmp .set_max_sectors			;setup max_sectors
+.ms_back1
+			cpx <.dir_entry_num
+			beq .found_file
+
 			lda <.blocks + 1
 			sec
 			sbc <.max_sectors
@@ -749,16 +736,12 @@ ___			= 0
 			iny
 			cpy #.DIR_TRACK
 			beq -
-
-			lda #<.ms_back2				;select second jump
-			jmp .set_max_sectors			;update max_sectors
+			bne .next_track
 .no_next_track
 			txa
 			sbx #-4
 			bne .next_dir_entry
 			;XXX TODO this line of code should never be reached
-.ms_back3
-			bpl .ms_cont				;needed to stay within page :-(
 .found_file
 			;store track
 			sty <.to_track
@@ -766,6 +749,18 @@ ___			= 0
 			;remember file index
 			stx .file_index
 
+			lda .dir_file_size + 0,x
+			ora .dir_file_size + 1,x
+			ora .dir_file_size + 2,x
+			ora .dir_file_size + 3,x
+			bne +
+			;file not found
+			;lda $1c00
+			;and #.MOTOR_OFF
+			;ora #.LED_ON
+			;sta $1c00
+			jmp .idle
++
 			lda <.blocks + 0
 			;calc first block size
 			eor #$ff
@@ -844,9 +839,8 @@ ___			= 0
 			and #$f0
 			eor .ser2bin,x
 			sta <.track_frob
-			lda #<.ms_back3
+			ldx #$ff
 .set_max_sectors
-			sta .ms_select + 1
 			lda #16
 			cpy #25
 			adc #0
@@ -859,12 +853,6 @@ ___			= 0
 			adc #2			;or 15 if < track 18 -> N = 0
 +
 			sta <.max_sectors
-.ms_select		jmp .ms_back1
-.ms_cont
-!if (.ms_back1 & $ff00) != (.ms_back2 & $ff00) { !error ".ms_back labels not in same page" }
-!if (.ms_back2 & $ff00) != (.ms_back3 & $ff00) { !error ".ms_back labels not in same page" }
-!if (.ms_back1 & $ff00) != (.ms_back3 & $ff00) { !error ".ms_back labels not in same page" }
-
 			sbc #$11		;carry still set depending on cpy #18
 			asl
 			sta .br0 + 1
@@ -872,6 +860,11 @@ ___			= 0
 			asl
 			asl
 			asl
+
+			cpx #$ff
+			beq +
+.ms_select		jmp .ms_back1
++
 						;XXX TODO, all other bits cleared, can use and + ora now?
 			ora #$0f		;preserve led, motor and stepper-bits
 			tax                     ;0xx01111
@@ -1076,7 +1069,7 @@ ___			= 0
 			stx <.is_loaded_sector
 							;96 cycles
 !if BITFIRE_CONFIG_MOTOR_ALWAYS_ON = 0 {
-!if .BITFIRE_BOGUS_READS > 0 {
+!if .BOGUS_READS > 0 {
 			lda <.bogus_reads
 			beq +
 			dec <.bogus_reads
@@ -1254,6 +1247,7 @@ ___			= 0
 			ldx #$03 + BITFIRE_DECOMP	;with or without barrier, depending on stand-alone loader or not
 			stx .pre_len + 1		;set preamble size
 
+			sty <.preamble_data + 0		;ack/status to set load addr, signal block ready
 			jmp .scramble_preamble
 
 .debug_decode_sector
@@ -1287,12 +1281,18 @@ ___			= 0
 	!warn .table_start - *, " bytes remaining for drivecode."
 }
 
+!if * > .tables {
+	!set .junk_start = *
+} else {
+	!set .junk_start = .tables
+}
 
-			* = .tables
-			;for now fill up gap until table start with junk, adapt if code grows up to here
-			!byte $ff, $fe, $fd, $fc, $fb, $fa, $f9, $f8, $f7, $f6, $f5, $f4, $f3, $f2, $f1, $f0
-                        !byte $ef, $ee, $ed, $ec, $eb, $ea, $e9, $e8, $e7, $e6, $e5, $e4, $e3, $e2, $e1, $e0
-                        !byte $df
+
+			* = .junk_start
+			;use remaining space with code or fill up with junk
+			!for .x, 0, $20 - <.junk_start {
+				!byte $ff - .x
+			}
 
 	 		* = .tables + $21
 .table_start
@@ -1349,8 +1349,8 @@ ___			= 0
 
 .second_pass
 
-;schnellerer xfer
-;jmp ($1800) möglich?
+;faster xfer
+;jmp ($1800) possible?
 
 ;if in carry: rol asl asl or ror lsr if $40?
 ;and #$04 or and #$40? would be bit 6
@@ -1359,24 +1359,8 @@ ___			= 0
 
 ;11111000 table fits into zp if compressed with asr #$f8, preamble then starts @ $89, zero bytes free then, but fits
 
-;XXX TODO
-;decode header_type too and against value -> full decode with last two bits!
-
-
-;spin_up -> set up bogus_read_counter? -> count down bogus reads and read_sector_ if != 0 -> check is always there but only active if motor was enabled again 
-
-;on motor on:
-;lda #.BITFIRE_BOGUS_READS
-;sta <.bogus_reads
-
-
-;lda <.bogus_reads
-;beq +
-;dec <.bogus_reads
-;bne .read_sector_
-
-
-;wait x syncs, or measure any, maybe better? measue via x/inx?
 ;halfstep, send_data, timer elapsed? else wait rest, halfstep, wait
-;spinup, start with slowest timing and adapt to real timing on first success?
 ;XXX TODO
+
+
+;XXX TODO swap bits with adc eor? is it possible, so the scramble is easier and no sertab is needed?!
