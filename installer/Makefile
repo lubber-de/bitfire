@@ -1,14 +1,14 @@
-C6510 = c6510
-C6510OPT = -p ../../../include
-ACME = acme
-ACMEOPT= -v1 -f cbm
+release ?= 0
+link_exit ?= 256
+ACME ?= acme
+ACME_OPTS ?= -f cbm -Drelease=$(release)
 
 .PHONY: all
 
 all: installer
 
-installer: installer.asm ../bitfire/installer ../bitfire/loader_*.inc
-	$(ACME) $(ACMEOPT) -DRELEASE=1 -o $@ $<
+installer: installer.asm ../loader/installer ../loader/loader_*.inc
+	$(ACME) $(ACME_OPTS) -Dlink_exit=$(link_exit) -o $@ $<
 
 clean:
 	-rm installer

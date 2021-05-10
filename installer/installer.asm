@@ -1,11 +1,15 @@
 ;linking helper macros
-!src "../link_macros_acme.inc"
+!src "../macros/link_macros_acme.inc"
 
 ;loader labels
-!src "../bitfire/loader_acme.inc"
+!src "../loader/loader_acme.inc"
+
+!ifndef link_exit {
+link_exit	= $0100
+}
 
 		* = bitfire_install_
-		!bin "../bitfire/installer",,2
+		!bin "../loader/installer",,2
 
 		* = $0900
 .init
@@ -20,7 +24,7 @@
 		txs
 
 		;load stage 2, either loaded by bootloader or after turn disk
-		jsr link_load_next_comp
+		jsr link_load_next_raw
 
 		;XXX TODO here it would also be possible to laod a custom link_resident part per side, but would require includes per side and resident part
-		jmp $0100
+		jmp link_exit
