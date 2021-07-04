@@ -69,9 +69,10 @@ static void write_bit(int value) {
 //    }
 }
 
-static void write_interlaced_elias_gamma(int value, int backwards_mode, int skip) {
+static void write_interlaced_elias_gamma(int value, int backwards_mode, int skip, int invert) {
     int bits = bit_size(value);
     int i;
+    int count = 0;
 
     for (i = 2; i <= value; i <<= 1)
         ;
@@ -86,11 +87,12 @@ static void write_interlaced_elias_gamma(int value, int backwards_mode, int skip
     }
 
     while ((i >>= 1) > 0) {
+	if (count >= 8) invert = 0;
+        count++;
         if (!skip) write_bit(0);
         //if (!skip) write_bit(backwards_mode);
 	skip = 0;
-        if (!skip) write_bit(value & i);
-	skip = 0;
+        if (!skip) write_bit(((value & i) > 0) ^ invert);
     }
     if (!skip) write_bit(1);
     //if (!skip) write_bit(!backwards_mode);
@@ -101,7 +103,7 @@ static void encode_literal(int length, const unsigned char *input_data, int *del
     if (!first) write_bit(0);
 
     /* copy literals length */
-    write_interlaced_elias_gamma(length, backwards_mode, 0);
+    write_interlaced_elias_gamma(length, backwards_mode, 0, 0);
     /* copy literals values */
     for (i = 0; i < length; i++) {
         write_byte(input_data[input_index]);
@@ -113,7 +115,7 @@ static void encode_literal(int length, const unsigned char *input_data, int *del
 static void encode_rep(int length, int *delta, int backwards_mode) {
     write_bit(0);
     /* copy from last offset length */
-    write_interlaced_elias_gamma(length, backwards_mode, 0);
+    write_interlaced_elias_gamma(length, backwards_mode, 0, 0);
     read_bytes(length, delta);
     return;
 }
@@ -121,11 +123,11 @@ static void encode_rep(int length, int *delta, int backwards_mode) {
 static void encode_match(int length, int offset, int *delta, int backwards_mode) {
     write_bit(1);
     /* copy from new offset MSB, -1 to make use of full offset range + 1 as 0 is not allowed in elias gamma */
-    write_interlaced_elias_gamma((offset - 1) / 128 + 1, backwards_mode, 0);
+    write_interlaced_elias_gamma((offset - 1) / 128 + 1, backwards_mode, 0, 0);
     write_byte((((offset - 1) % 128) << 1) | (length == 2));
 
      /* copy from new offset length */
-    write_interlaced_elias_gamma(length-1, backwards_mode, 1);
+    write_interlaced_elias_gamma(length-1, backwards_mode, 1, 0);
     read_bytes(length, delta);
     return;
 }
@@ -182,37 +184,36 @@ unsigned char *compress(BLOCK *optimal, const unsigned char *input_data, int inp
 
     for (optimal = next->chain; optimal; optimal = optimal->chain) {
         if (!optimal->offset) {
+            //printf("literal: len $%04x\n", optimal->length);
             encode_literal(optimal->length, input_data, delta, backwards_mode, first);
             actual += costof_literal(optimal->length);
             /* copy literals indicator */
             if (first) first = FALSE;
         } else if (optimal->offset == last_offset) {
+            //printf("copy last offset: $%04x len $%04x\n", optimal->offset, optimal->length);
             /* copy from last offset indicator */
             encode_rep(optimal->length, delta, backwards_mode);
             actual += costof_rep(optimal->length);
         } else {
             /* copy from new offset indicator */
+            //printf("copy new offset: $%04x len $%04x\n", optimal->offset, optimal->length);
             encode_match(optimal->length, optimal->offset, delta, backwards_mode);
             last_offset = optimal->offset;
             actual += costof_match(optimal->offset, optimal->length);
         }
 
         if (inplace) {
-            overwrite = (input_index) - (input_size - *output_size + output_index);
+            /* added +1, was off by one, thanks to Krill! */
+            overwrite = (input_index) - (input_size - *output_size + output_index) + 1;
             /* we would overwrite our packed data with a match, or have a literal that directly is followed by plain literal, so they can be aggregated */
-            if ((overwrite >= 0 && optimal->offset) || (overwrite == 0 && !optimal->offset)) {
-                if (optimal->offset) {
-                    /* accept match and update end_position, literals are skipped then, as they fall back to last position */
-                    *inplace_end_pos = input_index - skip;
-                    inplace_output_index = output_index;
-                    inplace_input_index = input_index;
-                };
-                break;
-            } else {
-                *inplace_end_pos = input_index - skip;
-                inplace_output_index = output_index;
-                inplace_input_index = input_index;
-            }
+            /* it is a literal that woudl overwrite, so exit already here */
+            if (overwrite >= 0 && !optimal->offset) break;
+            /* accept match and update end_position, literals are skipped then, as they fall back to last position */
+            *inplace_end_pos = input_index - skip;
+            inplace_output_index = output_index;
+            inplace_input_index = input_index;
+            /* it is a match that overwrites, let it still happen, but then end with plain literal */
+            if (overwrite >= 0 && optimal->offset) break;
         }
     }
 
@@ -223,7 +224,7 @@ unsigned char *compress(BLOCK *optimal, const unsigned char *input_data, int inp
         *inplace_end_pos = input_index - skip;
         /* end marker */
         write_bit(1);
-        write_interlaced_elias_gamma(256, backwards_mode, 0);
+        write_interlaced_elias_gamma(256, backwards_mode, 0, 0);
     } else {
         /* copy remaining data as is */
         input_index = inplace_input_index;

@@ -28,17 +28,17 @@
 
 CHECKSUM = 1
 REQDISC = 1
-BUSLOCK = 1
+BUSLOCK = 0
 WAIT_SPIN_DOWN = 0
 
-TIME_RAW = 0
-TIME_LOADCOMP = 1
+TIME_RAW = 1
+TIME_LOADCOMP = 0
 TIME_DECOMP = 0
 
 TIME_STRICT = 0
 
-;num_files	= $16
-num_files	= $12
+num_files	= $16
+;num_files	= $11
 
 runs		= $10
 cnt		= $16
@@ -46,16 +46,20 @@ dst		= $18
 dst_		= $1a
 prnt		= $1c
 prnt_		= $1e
+err		= $24
+endh		= $26
+
+accum		= $30
 
 screen		= $2000
 
 !src "../loader/loader_acme.inc"
 !src "../macros/link_macros_acme.inc"
 
-		* = $c000
+		* = $1000
 !bin "../loader/installer",,2
 
-		* = $cf00
+		* = $0900
 		lda #$0b
 !if TIME_STRICT == 1 {
 		sta $d011
@@ -67,6 +71,9 @@ screen		= $2000
 		sta $d018
 
 		ldx #$00
+		stx err
+		stx err + 1
+		stx bitfire_errors
 -
 		lda #$20
 		sta screen + $0000,x
@@ -110,8 +117,6 @@ screen		= $2000
 }
 		jmp benchmark
 
-		* = $e000
-
 display
 		lda #<screen
 		sta prnt + 0
@@ -144,7 +149,7 @@ display
 		cpx #num_files + 1
 		bne -
 
-		ldx #$0a
+		ldx #$12
 -
 		lda text4,x
 		sta screen + 23 * 40,x
@@ -153,11 +158,20 @@ display
 		dex
 		bpl -
 
+		ldx #20
+-
+		lda text3,x
+		sta screen + 22 * 40,x
+		lda #$0c
+		sta $d800 + 22 * 40,x
+		dex
+		bpl -
+
 		ldx #21
 -
 		lda text7,x
 		sta screen + 24 * 40,x
-		lda #$0f
+		lda #$0c
 		sta $d800 + 24 * 40,x
 		dex
 		bpl -
@@ -180,25 +194,32 @@ nmi
 		inc $d020
 		rti
 
+text3
+		!text "#    cycles   err acc"
 text4
-		!text "runs: $0000"
+		!text "runs: $0000   $0000"
 text7
 		!text "caps-lock for checksum"
 
 benchmark
 		ldx #$00
---
-		lda #$aa
+
+		lda #$20
 -
-.prime		sta $0400,x
+		sta screen + $0000,x
+		sta screen + $0100,x
+		sta screen + $0200,x
+		sta screen + $0300,x
 		inx
 		bne -
-		inc .prime + 2
-		lda .prime + 2
-		cmp #$28
-		bne --
 
 		lda #$00
+		ldx #$19
+-
+		sta accum,x
+		dex
+		bpl -
+
 		sta runs
 		sta runs+1
 
@@ -226,7 +247,6 @@ numb		lda #$00		;file number
 		pha
 		lda #$01
 		jsr setcol
-
 !if BUSLOCK == 1 {
 		+bus_lock		;raise ATN and lock bus, does it help to set bit 6 + 7 for output? Had problems on sx-64 with all the buslock and maybe drifting of raise/fall times
 
@@ -249,7 +269,7 @@ numb		lda #$00		;file number
 		pla
 		nop
 		bit $ea
-		dey
+		iny
 		bne -
 
 		+bus_unlock 3
@@ -287,8 +307,24 @@ numb		lda #$00		;file number
 		cmp #$7f
 		bne +
 }
+		ldx numb + 1
+		lda accum,x
+		clc
+		adc bitfire_errors
+		sta accum,x
+
 		jsr checksum
 +
+		lda err
+		clc
+		adc bitfire_errors
+		sta err
+		bcc +
+		inc err + 1
++
+		lda #$00
+		sta bitfire_errors
+
 		inc numb+1
 		lda numb+1
 		cmp #num_files
@@ -349,48 +385,48 @@ checksum
 		lda #$07
 		jsr setcol
 
-		lda loads,y
-		tax
-		clc
-		adc sizes,y
-		sta endl
-		lda loads+1,y
-		sta srch
-		adc sizes+1,y
+		lda sizes + 1,y
 		sta endh
+		inc endh
+
+		lax sizes,y
+		clc
+		adc loads,y
+		sta srch
+		sta srcd
+
+		txa
+		eor #$ff
+		tax
+		inx
+		bne +
+		dec endh
+		sec
++
+		lda loads + 1,y
+		sbc #$00
+		sta srch + 1
+		sta srcd + 1
 
 		lda #$00
 -
-srch = * + 2
-		eor $1000,x
+		clc
+srch = * + 1
+		adc $1000,x
+srcd = * + 1
+		sta $1000,x	;overwrite with junk
 		inx
-		bne +
-		inc srch
-+
-endl = * + 1
-		cpx #$00
 		bne -
-		ldy srch
-endh = * + 1
-		cpy #$00
+		inc srch + 1
+		inc srcd + 1
+		dec endh
 		bne -
 		ldx numb+1
 		cmp chksums,x
 		bne no
 
 		lda #$05
-		jsr setcol
-
-!if WAIT_SPIN_DOWN = 1 {
-		jsr clear
-		jsr clear
-		jsr clear
-		jsr clear
-		jsr clear
-		jsr clear
-		jsr clear
-}
-		jmp clear
+		jmp setcol
 
 no
 		lda #$02
@@ -459,6 +495,17 @@ rev
 		lda $0f03,x
 		jsr print_
 
+		iny
+		iny
+		lda bitfire_errors
+		jsr print_
+
+		iny
+		iny
+		ldx numb + 1
+		lda accum,x
+		jsr print_
+
 		lda prnt + 1
 		and #$03
 		ora #$d8
@@ -471,7 +518,7 @@ rev
 		lda #$01
 		sta (prnt),y
 		iny
-		cpy #$0c
+		cpy #$14
 		bne -
 
 		lda prnt + 0
@@ -499,22 +546,6 @@ print_
 		lda hex,x
 		sta (prnt),y
 		iny
-		rts
-clear
-		lda #$28
-		sta cln+2
---
-		ldy #$00
-		lda #$ff
--
-cln
-		sta $1000,y
-		dey
-		bne -
-		inc cln+2
-		ldx cln+2
-		cpx #$d0
-		bne -
 		rts
 
 print_count
@@ -626,6 +657,35 @@ hex_runs
 		tay
 		lda hex,y
 		sta screen + 23 * 40 + $9
+
+		lda err + 1
+		tax
+		and #$0f
+		tay
+		lda hex,y
+		sta screen + 23 * 40 + $10
+		txa
+		lsr
+		lsr
+		lsr
+		lsr
+		tay
+		lda hex,y
+		sta screen + 23 * 40 + $0f
+		lda err
+		tax
+		and #$0f
+		tay
+		lda hex,y
+		sta screen + 23 * 40 + $12
+		txa
+		lsr
+		lsr
+		lsr
+		lsr
+		tay
+		lda hex,y
+		sta screen + 23 * 40 + $11
 .barerts
 		rts
 
@@ -670,7 +730,7 @@ hex
 sizes
 !if TIME_RAW == 1 {
 !word $c179-$b635
-!word $bf80-$6a67
+!word $bf80-$6a65
 !word $bd00-$aa4a
 !word $4900-$3eed
 !word $6600-$3ee7
@@ -681,15 +741,15 @@ sizes
 !word $6358-$54d2
 !word $6200-$3ab4
 !word $7300-$6954
-!word $67a1-$5822
+!word $67a1-$5821
 !word $bef7-$bb95
 !word $8000-$7950
-!word $af00-$a15a
+!word $af00-$a159
 !word $666b-$3d20
 !word $a800-$95d4
-!word $bf80-$6a67
-!word $bf80-$6a67
-!word $bf80-$6a67
+!word $bf80-$6a65
+!word $bf80-$6a65
+!word $bf80-$6a65
 !word $6600-$3ee7
 } else {
 !word $c179-$a000	;a
@@ -718,57 +778,101 @@ sizes
 
 chksums
 !if TIME_RAW == 1 {
-!byte $84
-!byte $a0
-!byte $eb
-!byte $03
+!byte $40
+!byte $55
+!byte $fb
+!byte $e9
+!byte $a7
+!byte $c1
+!byte $33
+!byte $a1
+!byte $5c
+!byte $3a
+!byte $d4
+!byte $66
+!byte $97
 !byte $bd
-!byte $e7
-!byte $bf
-!byte $ad
-!byte $1c
-!byte $48
-!byte $b8
-!byte $04
-!byte $29
-!byte $8d
-!byte $9a
-!byte $8a
-!byte $22
-!byte $ba
-!byte $a0
-!byte $a0
-!byte $a0
-!byte $bd
+!byte $ec
+!byte $c4
+!byte $aa
+!byte $28
+!byte $55
+!byte $55
+!byte $55
+!byte $a7
+;!byte $84
+;!byte $01
+;!byte $eb
+;!byte $03
+;!byte $bd
+;!byte $e7
+;!byte $bf
+;!byte $ad
+;!byte $1c
+;!byte $48
+;!byte $b8
+;!byte $04
+;!byte $bb
+;!byte $8d
+;!byte $9a
+;!byte $c4
+;!byte $22
+;!byte $ba
+;!byte $01
+;!byte $01
+;!byte $01
+;!byte $bd
 } else {
-!byte $f2
-!byte $d3
-!byte $a6
-!byte $6f
-!byte $60
+!byte $ea
 !byte $fd
-!byte $59
-!byte $42
-!byte $bb
-!byte $f6
-!byte $fa
-!byte $79
-!byte $02
-!byte $a5
-!byte $35
-!byte $14
-!byte $34
-!byte $1f
-!byte $d3
-!byte $d3
-!byte $d3
+!byte $8e
+!byte $ad
+!byte $3c
+!byte $2b
+!byte $8f
 !byte $60
+!byte $23
+!byte $1a
+!byte $28
+!byte $c1
+!byte $5e
+!byte $85
+!byte $c3
+!byte $5e
+!byte $1c
+!byte $c3
+!byte $fd
+!byte $fd
+!byte $fd
+!byte $3c
+;!byte $f2
+;!byte $d3
+;!byte $a6
+;!byte $6f
+;!byte $60
+;!byte $fd
+;!byte $59
+;!byte $42
+;!byte $bb
+;!byte $f6
+;!byte $fa
+;!byte $79
+;!byte $02
+;!byte $a5
+;!byte $35
+;!byte $14
+;!byte $34
+;!byte $1f
+;!byte $d3
+;!byte $d3
+;!byte $d3
+;!byte $60
 }
 
 loads
 !if TIME_RAW == 1 {
 !word $b635
-!word $6a67
+!word $6a65
 !word $aa4a
 !word $3eed
 !word $3ee7
@@ -779,15 +883,15 @@ loads
 !word $54d2
 !word $3ab4
 !word $6954
-!word $5822
+!word $5821
 !word $bb95
 !word $7950
-!word $a15a
+!word $a159
 !word $3d20
 !word $95d4
-!word $6a67
-!word $6a67
-!word $6a67
+!word $6a65
+!word $6a65
+!word $6a65
 !word $3ee7
 } else {
 !word $a000

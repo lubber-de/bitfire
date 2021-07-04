@@ -36,13 +36,11 @@ d64write generates a suitable .d64 for you which can be read by bitfire and inco
 
 After the bitfire formatted files are written, standard files are added to the diskimage. So there's still the possibility to add files that can be loaded normally, mixing both types on a disk is no problem. So a bigger bootloader or adding a note is no problem. It is even possible to add further files to a disk with original gear, as the BAM is maintained and used blocks are thus protected from allocation/overwriting. However bitfire-files must be written first, as it assumes starting at track 1, sector 0, to avoid data loss this requres the -c flag to be set, so that d64write starts wit ha fresh formated .d64.
 
-Next up a small file, the bootloader, can be placed into the remaining sectors on track 18 to save blocks. It should be small enough to fit there, or an error occurs. Usually that program should not do more than install the loader and load/run the first file (bootstrap) on disk that then starts the demo(side).
+Next up a small file, the bootloader, can be placed into the remaining sectors on track 18 to save blocks. It should be small enough to fit there, or an error occurs. Usually that program should not do more than install the loader and load/run the first file (bootstrap) on disk that then starts the demo(side). For more details see the installer and bootstrap folder in the examples-dir.
 
 As a final step a dirart can be added to the dir, if there's still enough sectors free to accomodate it. An error will occur if not. d64write accepts a saved screen for that purpose, so it should be easy to create dirarts with e.g. a petscii editor (however take care that not all petscii symbols are accepted for dirart). From that screen every first 16 chars per row are taken for creating a dirart. The number of rows to be read in can be specified. The first row is used to specify header and id separated by an arbitrary char (see example dirart coming along with this release).
 
 If you want to place multiple files, (in standard format, for bitfire format it is mandatory to write in one go), you can add the -b or -s option multiple times to one commandline. So the right order is kept on a single call. Files in bitfire format are written sequentially so that no unecessary seektimes are created, that can be broken when standard files are placed in between. That said, it is wisely to place files on disk in the same order to be loaded, if being loaded once (random access is possible of course, but gives penalties due to excessive seeking).
-
-You can choose to write with different interleaves, however 4 always has been the best choice in any tested scenario and thus is the default. If you change the interleave you also have to change it with the loader as it needs to calculate the sectors belonging to each file by this value. To do so simply change the value for BITFIRE_CONFIG_INTERLEAVE in config.inc.
 
 Example:
 d64write -c cooldemo.d64 -h oxyron -i rules --side 1 --boot cooldemo.lz -b bootstrap1.lz -b part1.lz -b part2.lz -b part3.lz -s note
@@ -99,18 +97,19 @@ Add/remove functionality
 ------------------------
 
 In config.inc you may turn off certain functionality and by that save memory (is it necessary with that size however?). The plain loadraw-function will consume $7e bytes only. With all functions enabled the resident size is still smaller than $200 bytes, small, isn't it?
+The config.inc as well as the music.inc can also be placed in the root folder outside of the repository, so that you can include bitfire as a submodule, but you retain your own config within your project. The config outside the repo will be preferred and will verrule the config that comes with this repository.
 
 Else, choose from the following functions:
-BITFIRE_INCLUDE_DECOMP          = 1             ;Include decompressor including on the fly decompression capabilities
-BITFIRE_INCLUDE_FRAMEWORK       = 1             ;Include helpful calls (link_*) for loading files from a safe spot in mem, load_next functionality with no overhead, or to add an io safe base-irq
+CONFIG_INCLUDE_DECOMP          = 1             ;Include decompressor including on the fly decompression capabilities
+CONFIG_INCLUDE_FRAMEWORK       = 1             ;Include helpful calls (link_*) for loading files from a safe spot in mem, load_next functionality with no overhead, or to add an io safe base-irq
 
 Also you might want to try the following:
-BITFIRE_CONFIG_MOTOR_ALWAYS_ON  = 1		;This lets the motor spin all way round like a record and thus save valueable spinup time. If it goes on your nerves, set it to 0 and the drive will stop after loading.
+CONFIG_CONFIG_MOTOR_ALWAYS_ON  = 1		;This lets the motor spin all way round like a record and thus save valueable spinup time. If it goes on your nerves, set it to 0 and the drive will stop after loading.
 
 Those values speak for themself:
-BITFIRE_ZP_ADDR			= $02
-BITFIRE_INSTALLER_ADDR		= $1000
-BITFIRE_RESIDENT_ADDR		= $0200
+CONFIG_ZP_ADDR			= $02
+CONFIG_INSTALLER_ADDR		= $1000
+CONFIG_RESIDENT_ADDR		= $0200
 
 Yes, i prefer to place the whole thing at $0200-$3ff, there's no point in wasting precious ram at $0800 or $0c00, charsets or screens can be placed there or a bigger sid that reaches from $0800-$1fff.
 
@@ -147,7 +146,7 @@ link_cia2_type			;alias for CIA2 type
 Functions via macros
 --------------------
 
-The link_* functions represent the same functins as above, but they include a jmp-target that is jumped to after loading. Why? The advantage of this is, that any code in the memory can be overwritten, except the resident part of the loader dunring the loading-operation, and after laoding the code can be entered by teh given address:
+The link_* functions represent the same functins as above, but they include a jmp-target that is jumped to after loading. Why? The advantage of this is, that any code in the memory can be overwritten, except the resident part of the loader dunring the loading-operation, and after laoding the code can be entered by the given address:
 
 link_load_next_raw_jmp .addr
 link_load_next_comp_jmp .addr
@@ -160,7 +159,7 @@ Example:
 +link_load_next_comp_jmp $2000	;will load next file and decompress it on the fly and afterwards jump to $2000 to execute the loaded part
 
 link_player_irq			;links the raster-irq to the base-irq
-reset_drive			;resets the drive, so the laoder can be reuploaded later again and teh drive is free for own stuff like drive-code
+reset_drive			;resets the drive, so the laoder can be reuploaded later again and the drive is free for own stuff like drive-code
 request_disk .num		;command the floppy to check for given side#, will return as soon as the new diskside is detected
 setup_sync .frames		;setup frame counter to wait for $0000-$7fff frames
 sync				;wait for sync to happen or expire
@@ -309,3 +308,46 @@ jsr link_load_next_comp		;load
 +sync				;wait for timer to elapse -> so this happens $180 frames after the setup
 
 Other possibilities are to use syncpoints in SIDs and sync to those syncpoints. There's a syncpoint.inc included to have a single file to edit with all framecounts, so that the timings are not scattered all over your project.
+
+Technical Limitations
+---------------------
+
+1. Drive Speed / Wobble
+
+It might be a good idea to hav a look at the rpm*.prgs at this URL:
+https://sourceforge.net/p/vice-emu/code/HEAD/tree/testprogs/drive/rpm/
+
+Please check your drive so that it is running at 300 rpm. In fact the loader can cope with floppys that are off that range by a few rounds, still it will have retries and possible read errors and hickups. Belt driven drives (which can be found in 1541, 1541C and 1541-ii) show a so called wobble, so the drive's rotation speed is drifting between a minimum and maximum in a sinus like manner. There's also 1541-ii drives out there (jpn, sankyo) that come along with a direct driven spindle. The plot-programs show a quite straight line then. On other drives, one can see howstrong the amplitude of the wobble is. I have drives that left the green area by quite a bit, and have drives with alps-mechanics, that jitter more or less randomly. They throw the most read errors in my tests. Things were better, when the disks were written with a drive, that has a direct drive. If the disks are written with the same floppy, on can assure, that the track alignment is the same, but when written with a strong wobble and read back with the same strong wobble, amplitudes can add up to twice the wobble, reading speed can increase and decrease fast and that can trip the gcr-read-loop of the loader. There are many sanity checks implemented, as the eor-checksum of a sector is a bit weak, it can happen that the chcksum is still okay, but the content of a sector is wrong. So the last trailing bytes after the checksum are also checked for being zero. Also the header is double checked, if track, sector and disk-id are correct besides the checksum. A lot of tests on all kind of hardware showed, that there's the possibility of a file being loaded with a corrupt content in very seldom cases due to this physical restrictions. The gcr-loop used in the rom takes only 19 cycles for a byte to read from disk, that might allow for more tolerance regarding that matter.
+
+2. Electromagnetic Fields
+
+During the testing, i discovered, that my screen significantly influences the floppy, that was located beneath. With the screen turned off, i had no read erroros happening, but when having the screen turned on, there's suddenly read-errors and checksum-errors. Creating a distance of around 30cm between floppy and screen, ceased all the problems and reading was error-free. Moving the floppy side by side to the screen, made it even fail completely. I first suspected a bad timing in the gcr-loop, but no matter how i shifted the timing, the errors still happened. The errors also occur on a SX64, th thas the screen and the floppy build in at a fixed distance, so not much one can change here.
+
+3. Cables
+
+Thanks to Ikwai i happened to have hands on a setup wit ha 2m unshielded iec-cable on which the 72-cacle 2bit-ATN transfer failed as it missed it's timing. A slower timing solved the problems, but also exchanging that cable.
+
+4. Unsettled Head
+
+Starting to read from disk directly after stepping can also lead to checksum errors, so waiting a bit is adviseable. To not waste time, data is sent directly after stepping (some even do a halftrack in between, like sparkle. Had done that too in the very early versions of bitfire, but dropped that to save code, it didn't bring much speed gain)
+
+5. Spin Up
+
+During spin up of teh drive, the gcr read might fail, as it misses the window where timing is optimal, either by spinning too slow yet, or by overshooting. This also can cause checksum errors. As one file ends on teh same sector, where a new one begins, we can force the last sector of a file to be read last. Upon loading of the next file, the sector is already cached and present and the first file chunk can be sind during spin up. This covers at least a few errors that else occur on spin up.
+
+6. Buslock
+
+Banging $dd00 hard while the floppy is idle, seems to produce glitches on THCM's SX64. No matter how much i debounced or carefully i dropped line by line, things failed. There's glitchy hardware out there. Not all of those glitches can be handled in a satisfactory manner or by software.
+
+7. Jitter
+
+The gcr read usually introduced 3 cycles jitter by using bvc * to sync on a byte_ready. Krill showed, that one can also use a bunch of bvs .loop to sync on a byte, what introduces only cycles jitter and allows for a better timing within range.
+
+8. Fast Stepping
+
+The so called shrydar-stepping that does the second half-step already $0c00 cycles after the first, works on most drives for single steps, but i also bumped in a 1541-ii that would choke and end up on a half track and failing to read any further.
+
+Testing
+-------
+
+Bitfire has been tested on various hardware, 5 1541-ii drives (Newtronics, Sankyo, JPN mechanics), 2 1541C (shortboard, Newtronics) and 1 1541 (longboard, 3 different ALPS mechanics), 11 different cables, daisychained and single drive, 4 c64 (breadbox) 1 c64c, SX64 with ALPS drive.
