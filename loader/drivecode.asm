@@ -50,7 +50,7 @@
 .FORCE_LAST_BLOCK	= 1
 .SHRYDAR_STEPPING	= 0 ;so far no benefit on loadcompd, and causes more checksum retries on 2 of my floppys, also let's one of the 1541-ii choke at times and load forever when stuck on a half track
 .DELAY_SPIN_DOWN	= 1
-.SANCHECK_BVS_LOOP	= 1 ;not needed, as gcr loop reads sane within that spin up ranges the loop covers by nature
+.SANCHECK_BVS_LOOP	= 0 ;not needed, as gcr loop reads sane within that spin up ranges the loop covers by nature
 .SANCHECK_HEADER_0F	= 0 ;does never trigger
 .SANCHECK_HEADER_ID	= 0 ;does never trigger
 .SANCHECK_TRAILING_ZERO = 1 ;check for trailing zeroes after checksum byte
@@ -294,52 +294,76 @@ ___			= $ff
 			nop
 			nop
 			nop
-.read_loop							;        -> $0100,x
+
+			;XXX TODO if we would swap nibbles on certain places, we could reuse tables easier (11111000_hi -> 44444000_lo), but this would break the eor checksum scheme
+			;XXX TODO if there's tables with the same bit ordern and pattern, we could save hi and low nibbles in there, but need to and #$xx before adding second nibble
+.read_loop
 			ldx #$3e
 			lda $1c01				;22333334
 			sax <.threes + 1
+			;arr #$c1				;22200000
 			asr #$c1				;lookup? -> 4 cycles
 			tax
 			lda .tab11111000_hi,y			;8 cycles to mask and lookup
 .twos			ora .tab02200222_lo,x			;13 cycles to mask ad lookup
 			tsx
 			pha					;$0100
-			beq .gcr_end				;125
+			beq .gcr_end
 
-			eor $0101,x				;           $0101,x
-			eor $0103,x				;           $0103,x
+			eor $0101,x
+			eor $0103,x
 .gcr_entry
 			sta <.chksum2 + 1
 			lda $1c01				;44445555	second read
 			ldx #$0f
-			sax <.fives + 1
-.dummy			arr #$f0
+			;ldx #$07
+			;ror
+			;sax?
+			;and #$f8
+			;tay
+			sax <.fives + 1				;XXX TODO 44444555 -> put bit  to position 6? -> 02200222_lo can be reused? but need highbits?
+								;XXX TODO ldx #$f8 ror sax 4th arr #$07 tay -> 5xxxxx55_hi + bit 2 in carry
+			arr #$f0
 								;sta <.fours + 1 to save tay and keep y free? if all tays are saved +0 3 cycles for 3 sta .num + 1
 			tay					;44444---		;how's about having 4444---4?
 !if .GCR_125 = 0 {
 			ldx #$03
 }
 .threes			lda <.tab00333330_hi			;ZP!
-			ora .tab44444000_lo,y
+			ora .tab44444000_lo,y			;XXX TODO can we reuse 566666 low?
+								;XXX TODO have tabls with low and highbyte set to be used with _lo and _hi and an and operation?
+								;XXX TODO add hi gcr code to low gcr code and by that compensate the and?
 			pha					;$0103
 			;maybe do another eor #$00 and sta chksum here?
 
-.gcr_slow1		lda $1c01				;56666677		third read	;slow down by 6,12,18
-			sax <.sevens + 1			;------77		;encode first 7 with sixes and by that shrink 6table? and add it with sevens?
+.gcr_slow1		lda $1c01				;56666677		third read
+			sax <.sevens + 1			;----6677		;encode first 7 with sixes and by that shrink 6table? and add it with sevens?
 			asr #$fc				;-566666-		;can be shifted, but and would suffice?
-			tax
+								;XXX TODO we shift out bit 3 of 7th table here, coudl shift it in later on asr #$40 as arr #$40
+			tax					;XXX TODO sta .sixths would also suffice and use same amount of cycles, but no offset possible then :-(
 
 .fives			lda <.tab00005555_hi			;ZP!
-			ora <.tab05666660_lo,x			;XXX TODO shifted by 1 this would be same as 7d788888 table?
+			ora <.tab05666660_lo,x			;XXX TODO can't make use of advatage that this is zp access :-( has an offset of 1 shifted by 1 this would be same as 7d788888 table? needs one more lsr and ora #$c0 to make that work
 			pha					;$0102
 .chksum			eor #$00				;103,101,100
 .chksum2		eor #$00
 			sta <.chksum + 1
-			lax $1c01				;77788888	forth read	;slow down by 2, 4, 6
-			asr #$40				;ora #$11011111 would also work, and create an offset of $1f? Unfortunatedly the tab then wraps  but okay when in ZP :-(
-			tay
 
-			lda .tab7d788888_lo,x			;this table decodes bit 0 and bit 2 of quintuple 7 and whole quintuple 8
+			lax $1c01				;77788888	forth read
+			;lda $1c01
+			;sta <.eigths + 1
+			;asr #$40
+			;tay
+
+			;asl
+			;tax
+			;arr #$80
+			;tay
+			asr #$40				;ora #$11011111 would also work, and create an offset of $1f? Unfortunatedly the tab then wraps but okay when in ZP :-(
+								;XXX TODO also and #$40 is okay, as it is just a single bit and shifting the second half of that tab?
+			tay
+								;can we reuse that trick to decode 7 bits at once somewhere?!
+			lda .tab7d788888_lo,x			;this table decodes bit 0 and bit 2 of quintuple 7 and whole quintuple 8, so overall 7 bits
 			ldx #$07				;delay upcoming adc as long as possible, as it clears the v flag
 !if .GCR_125 = 1 {
 .sevens			adc .tab0070dd77_hi,y			;clears v-flag, decodes the remaining bits of quintuple 7, no need to set x to 3, f is enough
@@ -348,8 +372,11 @@ ___			= $ff
 }
 			pha					;$0101
 			lda $1c01				;11111222	fifth read
+			;ldx #$06
 			sax <.twos + 1
-			and #$f8				;XXX TODO could shift with asr and compress ones table?
+			;asr #$f9
+			;lsr -> threes table could be used
+			and #$f8				;XXX TODO could shift with asr and compress ones table, or use ora #$07 to wipe out bits 0..2?
 			tay
 								;XXX TODO with shift, bit 2 of twos is in carry and could be added as +0 +4?
 .gcr_slow2		bvs .read_loop
@@ -392,6 +419,8 @@ ___			= $ff
                         !byte                          $b0, $80, $a0, ___, $b0, $80, $a0, ___, $b0, $80, $a0
 }
 +
+			;$01 ora ($xx,x)
+			;$1c top
 			lda $1c01
 			jmp +					;9 cycles (jmp +, jmp +, jmp .gcr_slow1 + 3)
 .gcr_20
@@ -437,23 +466,23 @@ ___			= $ff
 .preamble_entry
 			bit $1800
 			bmi *-3
-			sax $1800				;76540213	-> dddd0d1d
+			sax $1800				;76540213	-> ddd-0d1d
 
 			dey
 			asl					;6540213. 7
-			ora #$10				;654X213. 7	-> ddd!2d3d
+			ora #$10				;654+213. 7	-> ddd+2d3d
 			bit $1800
 			bpl *-3
 			sta $1800
 
-			ror					;7654X213 x
-			asr #%11110000				;.7654... x	-> ddd54d!d
+			ror					;7654+213 .
+			asr #%11110000				;.7654... .	-> ddd54d-d
 			bit $1800
 			bmi *-3
 			sta $1800
 
 			lsr					;..7654..
-			asr #%00110000				;...76...	-> ddd76d!d
+			asr #%00110000				;...76...	-> ddd76d-d
 			cpy #$ff				;XXX TODO could make loop faster here, by looping alread here on bne? needs a bit of code duplication then
 			bit $1800
 			bpl *-3
@@ -842,7 +871,7 @@ ___			= $ff
 			bpl *-3
 }
 
-			lda <.to_track				;already part of set_bitrate -> load track
+			ldy <.track				;already part of set_bitrate -> load track
 
 			;----------------------------------------------------------------------------------------------------
 			;
@@ -851,8 +880,8 @@ ___			= $ff
 			;----------------------------------------------------------------------------------------------------
 
 .set_bitrate
-			tay
-!if .SANCHECK_TRACK = 1 {
+!if .SANCHECK_TRACK = 1  & .SANCHECK_HEADER_ID = 1 {
+			tya
 			ldx #$09
 			sbx #$00
 			eor <.ser2bin,x
@@ -879,7 +908,7 @@ ___			= $ff
 			jmp .find_file_back_			;can only happen if we come from .set_bitrate code-path, not via .set_max_sectors, as x is a multiple of 4 there, extend range by doin two hops, cheaper than long branch XXX TODO, returned to long branch, as there is no fitting gap for second bne :-(
 +
 
-			sta .br_gcr + 1
+			sta .gcr_slow3 + 1
 			rol					;00000xx1
 !if .SANCHECK_BVS_LOOP = 1 {
 			sax .br0 + 1				;$00,$02,$04,$06
@@ -931,9 +960,7 @@ ___			= $ff
 			sta <.gcr_slow1 + 1
 			stx <.gcr_slow1 + 2
 
-.br_gcr			lda #$00
-			sta .gcr_slow3 + 1
-
+			lda .gcr_slow3 + 1
 			clc
 			adc #.read_loop - .gcr_slow2_ - 5	;target of first bvs
 			ldx #.gcr_slow2_ - .gcr_slow2		;num of bvs to fix
@@ -1011,11 +1038,13 @@ ___			= $ff
 			;lda $1c00
 			;eor #.LED_ON
 			;sta $1c00
+!if CONFIG_DEBUG = 1 {
 			lax .errors + 1
 			sbx #-4
 			bmi +
 			stx .errors + 1
 +
+}
 .next_sector
 .read_gcr_header						;read_header and do checksum, if not okay, do again
 			ldx #$07				;bytes to fetch
@@ -1059,7 +1088,14 @@ ___			= $ff
 }
 			pla					;.header_track
 !if .SANCHECK_TRACK = 1 {
-			cmp <.track_frob			;needs to be precalced, else we run out of time
+	!if .SANCHECK_HEADER_ID = 1  {
+			eor <.track_frob			;needs to be precalced, else we run out of time
+	} else {
+			ldx #$09
+			sbx #$00
+			eor <.ser2bin,x
+			eor <.track
+	}
 			bne .retry_no_count
 }
 			;XXX TODO, can only be $1x or 0x
@@ -1307,6 +1343,7 @@ ___			= $ff
 
 			;clc					;should never overrun, or we would wrap @ $ffff?
 			sta <.preamble_data + 2			;block address high
+!if CONFIG_DEBUG = 1 {
 			tya
 .errors			ora #$00
 			;reset per block xfer
@@ -1314,6 +1351,9 @@ ___			= $ff
 			sta <.preamble_data + 3 + CONFIG_DECOMP	;ack/status to set load addr, signal block ready
 			lda #$00
 			sta .errors + 1
+} else {
+			sty <.preamble_data + 3 + CONFIG_DECOMP	;ack/status to set load addr, signal block ready
+}
 
 !if .POSTPONED_XFER = 1 {
 			lda <.end_of_file			;eof?
@@ -1540,3 +1580,15 @@ ___			= $ff
 ;XXX TODO optimze eof detection?
 
 ;turn disc, make it send a single byte to ack? -> wait block ready, receive a byte and then floppy goes idle?
+
+
+
+
+;11111222
+
+;22333334
+
+;44445555
+
+;56666677
+;77788888
