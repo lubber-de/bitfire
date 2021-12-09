@@ -16,7 +16,7 @@ HEADER:= sfx.h
 all: bitnax
 
 bitnax: $(SOURCE) $(HEADER)
-	@echo "Buidling bitnax..."
+	@echo "Building bitnax..."
 	$(VR)$(CC) $(bitnax_CFLAGS) -o $@ $(SOURCE)
 
 sfx.h: sfx.asm
@@ -28,4 +28,4 @@ sfx.h: sfx.asm
 	#$(VR)rm $(basename $@).lst sfx
 
 clean:
-	$(VR)-rm bitnax sfx.h
+	$(VR)-rm bitnax sfx.h sfx sfx.lst

@@ -107,7 +107,9 @@ ZX0_INLINE_GET_LEN	= 0
 		jsr .lz_get_len
 }
 		sbc #$01			;saves the iny later on
-		sec				;need sec here if we want to forgo in the beq .lz_calc_msrc
+		bcs +
+		dcp .lz_len_hi			;dec highbyte of length by one, a = $ff, so cmp will always set carry for free on top
++
 .lz_match_
 		eor #$ff
 		;beq .lz_calc_msrc		;just fall through on zero? $ff + sec -> addition is neutralized and carry is set, so no harm
@@ -118,7 +120,7 @@ ZX0_INLINE_GET_LEN	= 0
 		sta <.lz_dst + 0
 		bcs .lz_clc			;/!\ branch happens very seldom
 		dec <.lz_dst + 1
-.lz_clc_back
+.lz_clc
 		clc
 .lz_offset_lo	adc #$00			;carry is cleared, subtract (offset + 1)
 		sta .lz_msrcr + 0
@@ -152,10 +154,7 @@ ZX0_INLINE_GET_LEN	= 0
 .lz_m_page
 		dec <.lz_len_hi
 		inc .lz_msrcr + 1
-		bne .lz_cp_match
-.lz_clc
-		clc
-		bcc .lz_clc_back
+		jmp .lz_cp_match
 .lz_l_page
 		dec <.lz_len_hi
 		sec				;only needs to be set for consecutive rounds of literals, happens very seldom
