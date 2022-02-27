@@ -12,12 +12,10 @@ PACKER = ../packer/dali/dali
 
 all: benchmark
 
-benchmark-lz:
+benchmark-zx0:
 	rm files/*.lz; for i in files/*; do $(ZX0) $(ZX0_OPTS) -o $$i.lz $$i; done
 benchmark-dali:
 	rm files/*.lz; for i in files/*; do $(PACKER) $(PACKER_OPTS) -o $$i.lz $$i; done
-benchmark-exomizer:
-	rm files/*.lz; for i in files/*; do exomizer level -o $$i.lz $$i; done
 
 benchmark: checksum.asm Makefile ../loader/installer
 	-rm side*.d64
@@ -26,6 +24,7 @@ benchmark: checksum.asm Makefile ../loader/installer
 	$(ACME) $(ACME_OPTS) -o $@ $<
 	#exomizer sfx 0x0900 -o $@.prg $@
 	$(PACKER) $(PACKER_OPTS) --sfx 0x0900 -o $@.prg $@
+	#$(ZX0) $(ZX0_OPTS) --sfx 0x0900 -o $@.prg $@
 	cp benchmark.prg installer$(TIMESTAMP).prg
 	$(D64WRITE) $(D64WRITE_OPTS) -c side$(TIMESTAMP).d64 --free 1337 -h oxyron -i \<3 --side 1 \
 			--boot $@.prg \

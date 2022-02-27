@@ -184,9 +184,22 @@ l:
 ).
 		}
 
+		#macro link_music_update 
+		{
+.(
+			inc link_frame_count + 0
+			bne l
+			inc link_frame_count + 1
+l:
+			jmp (link_music_addr)
+).
+		}
+
 		#macro start_music_nmi 
 		{
 .(
+			;lda #$20
+			;sta link_music_play_jmp
 			ldx #<link_player
 			lda #>link_player
 
@@ -218,6 +231,8 @@ l:
 			lda #$7f
 			sta $dd0d
 			lda $dd0d
+			;lda #$4c
+			;sta link_music_play_jmp
 ).
 		}
 
@@ -227,5 +242,7 @@ l:
 			lda $dd0d
 			lda #$81
 			sta $dd0d
+			;lda #$4c
+			;sta link_music_play_jmp
 ).
 		}

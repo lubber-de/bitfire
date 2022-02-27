@@ -33,9 +33,10 @@ WAIT_SPIN_DOWN = 0
 
 TIME_RAW = 0
 TIME_LOADCOMP = 0
+TIME_RAW_DECOMP = 0
 TIME_DECOMP = 1
 
-TIME_STRICT = 0
+TIME_STRICT = 1
 
 num_files	= $16
 ;num_files	= $11
@@ -284,11 +285,16 @@ numb		lda #$00		;file number
 		pha
 		jsr bitfire_loadraw_
 }
-!if TIME_DECOMP = 1 {
+!if TIME_DECOMP = 1 or TIME_RAW_DECOMP = 1 {
+!if TIME_RAW_DECOMP = 1 {
+		jsr .start_timer
+}
 		pla
 		pha
 		jsr bitfire_loadraw_
+!if TIME_RAW_DECOMP = 0 {
 		jsr .start_timer
+}
 		jsr bitfire_decomp_
 }
 !if TIME_LOADCOMP = 1 {
@@ -344,7 +350,9 @@ numb		lda #$00		;file number
 		jsr hex_runs
 		jsr reset
 !if TIME_STRICT == 1{
-		jam
+		lda #$1b
+		sta $d011
+		jmp *
 }
 
 !if REQDISC == 1 {
@@ -736,30 +744,31 @@ hex_runs
 
 hex
 		!text "0123456789abcdef"
+
 sizes
 !if TIME_RAW == 1 {
 !word $c179-$b635
-!word $bf80-$6a65
-!word $bd00-$aa4a
+!word $bf80-$6a61
+!word $bd00-$aa49
 !word $4900-$3eed
-!word $6600-$3ee7
-!word $4396-$322a
+!word $6600-$3ee5
+!word $4396-$3229
 !word $62d5-$5e47
 !word $2d00-$2b1f
 !word $4500-$36e9
-!word $6358-$54d2
+!word $6358-$54d3
 !word $6200-$3ab4
 !word $7300-$6954
-!word $67a1-$5821
+!word $67a1-$5822
 !word $bef7-$bb95
 !word $8000-$7950
-!word $af00-$a159
-!word $666b-$3d20
+!word $af00-$a15a
+!word $666b-$3d1f
 !word $a800-$95d4
-!word $bf80-$6a65
-!word $bf80-$6a65
-!word $bf80-$6a65
-!word $6600-$3ee7
+!word $bf80-$6a61
+!word $bf80-$6a61
+!word $bf80-$6a61
+!word $6600-$3ee5
 } else {
 !word $c179-$a000	;a
 !word $bf80-$2800	;b
@@ -787,50 +796,28 @@ sizes
 
 chksums
 !if TIME_RAW == 1 {
+!byte $30
+!byte $b5
+!byte $cc
+!byte $61
 !byte $40
-!byte $55
-!byte $fb
-!byte $e9
-!byte $a7
-!byte $c1
-!byte $33
-!byte $a1
-!byte $5c
-!byte $3a
-!byte $d4
-!byte $66
-!byte $97
-!byte $bd
-!byte $ec
-!byte $c4
-!byte $aa
-!byte $28
-!byte $55
-!byte $55
-!byte $55
-!byte $a7
-;!byte $84
-;!byte $01
-;!byte $eb
-;!byte $03
-;!byte $bd
-;!byte $e7
-;!byte $bf
-;!byte $ad
-;!byte $1c
-;!byte $48
-;!byte $b8
-;!byte $04
-;!byte $bb
-;!byte $8d
-;!byte $9a
-;!byte $c4
-;!byte $22
-;!byte $ba
-;!byte $01
-;!byte $01
-;!byte $01
-;!byte $bd
+!byte $8f
+!byte $dd
+!byte $09
+!byte $6f
+!byte $45
+!byte $52
+!byte $85
+!byte $17
+!byte $58
+!byte $61
+!byte $31
+!byte $cd
+!byte $ba
+!byte $b5
+!byte $b5
+!byte $b5
+!byte $40
 } else {
 !byte $ea
 !byte $fd
@@ -854,54 +841,32 @@ chksums
 !byte $fd
 !byte $fd
 !byte $3c
-;!byte $f2
-;!byte $d3
-;!byte $a6
-;!byte $6f
-;!byte $60
-;!byte $fd
-;!byte $59
-;!byte $42
-;!byte $bb
-;!byte $f6
-;!byte $fa
-;!byte $79
-;!byte $02
-;!byte $a5
-;!byte $35
-;!byte $14
-;!byte $34
-;!byte $1f
-;!byte $d3
-;!byte $d3
-;!byte $d3
-;!byte $60
 }
 
 loads
 !if TIME_RAW == 1 {
 !word $b635
-!word $6a65
-!word $aa4a
+!word $6a61
+!word $aa49
 !word $3eed
-!word $3ee7
-!word $322a
+!word $3ee5
+!word $3229
 !word $5e47
 !word $2b1f
 !word $36e9
-!word $54d2
+!word $54d3
 !word $3ab4
 !word $6954
-!word $5821
+!word $5822
 !word $bb95
 !word $7950
-!word $a159
-!word $3d20
+!word $a15a
+!word $3d1f
 !word $95d4
-!word $6a65
-!word $6a65
-!word $6a65
-!word $3ee7
+!word $6a61
+!word $6a61
+!word $6a61
+!word $3ee5
 } else {
 !word $a000
 !word $2800
@@ -926,8 +891,6 @@ loads
 !word $2800
 !word $2800
 }
-
-
 
 
 ;XXX TODO copy away loadercode and benchmark code to compare

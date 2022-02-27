@@ -38,8 +38,10 @@
 !src "constants.inc"
 
 ;config params
-.POSTPONED_XFER		= 1 ;postpone xfer of block until first halfstep to cover settle time for head transport
-.CACHED_SECTOR		= 1 ;cache last sector, only makes sense if combined with force last block, so sectors shared among 2 files (end/start) have not to be read 2 times
+.LOAD_IN_ORDER_LIMIT	= $ff ;number of sectors that should be loaded in order (then switch to ooo loading)
+.LOAD_IN_ORDER		= 0   ;load all blocks in order to check if depacker runs into yet unloaded memory
+.POSTPONED_XFER		= 1   ;postpone xfer of block until first halfstep to cover settle time for head transport
+.CACHED_SECTOR		= 1   ;cache last sector, only makes sense if combined with force last block, so sectors shared among 2 files (end/start) have not to be read 2 times
 ;XXX TODO implement readahead, before going to idle but with eof already internally set, force read of last sector again?
 ;ldy <.last_block_num
 ;inc .wanted,y
@@ -49,13 +51,13 @@
 
 .FORCE_LAST_BLOCK	= 1
 .SHRYDAR_STEPPING	= 0 ;so far no benefit on loadcompd, and causes more checksum retries on 2 of my floppys, also let's one of the 1541-ii choke at times and load forever when stuck on a half track
-.DELAY_SPIN_DOWN	= 1
+.DELAY_SPIN_DOWN	= 1 ;wait for app. 4s until spin down in idle mode
 .SANCHECK_BVS_LOOP	= 0 ;not needed, as gcr loop reads sane within that spin up ranges the loop covers by nature
 .SANCHECK_HEADER_0F	= 0 ;does never trigger
 .SANCHECK_HEADER_ID	= 0 ;does never trigger
 .SANCHECK_TRAILING_ZERO = 1 ;check for trailing zeroes after checksum byte
 .SANCHECK_TRACK		= 1 ;check if on right track after header is read
-.SANCHECK_SECTOR	= 0 ;
+.SANCHECK_SECTOR	= 0 ;check if sector # is within range
 .INTERLEAVE		= 4
 .GCR_125		= 1
 
@@ -187,18 +189,12 @@
 .zp_start
 
 ;.free			= .zp_start + $00
-;.free			= .zp_start + $01
-;.free			= .zp_start + $02
-;.free			= .zp_start + $03
 .max_sectors		= .zp_start + $08			;maximum sectors on current track
 .dir_sector		= .zp_start + $10
 .blocks_on_list		= .zp_start + $11			;blocks tagged on wanted list
 .spin_count		= .zp_start + $18
 .spin_up		= .zp_start + $19
-;.free			= .zp_start + $20
-;.free			= .zp_start + $21
-;.free			= .zp_start + $22
-;.free			= .zp_start + $23
+.desired_sect		= .zp_start + $20
 .ser2bin		= .zp_start + $30			;$30,$31,$38,$39
 .blocks 		= .zp_start + $28			;2 bytes
 .wanted			= .zp_start + $3e			;21 bytes
@@ -209,7 +205,7 @@
 .temp			= .zp_start + $5a
 .preamble_data		= .zp_start + $60
 .track_frob		= .zp_start + $66
-;free			= .zp_start + $68
+.block_size		= .zp_start + $68
 .filenum 		= .zp_start + $69
 .is_loaded_track	= .zp_start + $6a
 .is_loaded_sector	= .zp_start + $6c
@@ -224,6 +220,7 @@
 .dir_entry_num		= .zp_start + $7a
 .end_of_file		= .zp_start + $7c
 
+.FS			= 0					;first sector
 .DT			= 18					;dir_track
 .DS			= 18					;dir_sector
 .PA			= $ff					;preamble
@@ -262,12 +259,15 @@ ___			= $ff
 			;     0    1    2    3    4    5    6    7    8    9    a    b    c    d    e    f
                         !byte ___, $b0, $80, $a0, $f0, $60, $b0, $20, ___, $40, $80, $00, $e0, $c0, $a0, $80	;00
                         !byte .DS, .BL, $f0, $1e, $70, $1f, $60, $17, ___, ___, $b0, $1a, $30, $1b, $20, $13	;10
-                        !byte ___, $20, $00, $80, $50, $1d, $40, $15, ___, ___, $80, $10, $10, $19, $00, $11	;20
+                        !byte .FS, $20, $00, $80, $50, $1d, $40, $15, ___, ___, $80, $10, $10, $19, $00, $11	;20
                         !byte .S0, .S1, $e0, $16, $d0, $1c, $c0, $14, .S1, .S0, $a0, $12, $90, $18, .WT, .WT	;30
                         !byte .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT, .WT	;40
                         !byte .WT, .WT, .WT, $0e, ___, $0f, .DT, $07, .DT, ___, ___, $0a, ___, $0b, ___, $03	;50
                         !byte .PA, .PA, .PA, .PA, .PA, $0d, ___, $05, ___, ___, ___, $00, ___, $09, ___, $01	;60
                         !byte ___, ___, ___, $06, ___, $0c, ___, $04, ___, ___, ___, $02, ___, $08		;70
+
+
+
 
 
 			;XXX TODO /!\ if making changes to gcr_read_loop also the partly decoding in read_sector should be double-checked, same goes for timing changes
@@ -279,13 +279,13 @@ ___			= $ff
 ;           cycle
 ;bit rate   0         10        20        30        40        50        60        70        80        90        100       110       120       130       140       150       160
 ;0          1111111111111111111111111111111122222222222222222222222222222222333333333333333333333333333333334444444444444444444444444444444455555555555555555555555555555555
-;                1                       ggggggccccccccccc   2                   ggggggggg...3ggggggggg                 ccccccc   4             v      5       bbbbbbbbbbbbb
+;           gggggg   1                      ccccccccccc   2                   ggggggggg...3ggggggggg                 ccccccc   4           v        5         bbbbbbbbbbbbbb
 ;1          111111111111111111111111111111222222222222222222222222222222333333333333333333333333333333444444444444444444444444444444555555555555555555555555555555
-;                1                       ggggccccccccccc   2                   gggggg...3gggggg                 ccccccc   4             v      5       bbbbbbbbbbb
+;           gggg   1                      ccccccccccc   2                   gggggg...3gggggg                 ccccccc   4           v        5         bbbbbbbbbbbb
 ;2          11111111111111111111111111112222222222222222222222222222333333333333333333333333333344444444444444444444444444445555555555555555555555555555
-;                1                       ggccccccccccc   2                   ggg...3ggg                 ccccccc   4             v      5       bbbbbbbbb
+;           gg   1                      ccccccccccc   2                   ggg...3ggg                 ccccccc   4           v        5         bbbbbbbbbb
 ;3          1111111111111111111111111122222222222222222222222222333333333333333333333333334444444444444444444444444455555555555555555555555555
-;                1                       ccccccccccc   2                   ...3                 ccccccc   4             v      5       bbbbbbb
+;              1                      ccccccccccc   2                   ...3                 ccccccc   4           v        5         bbbbbbbb
 ;b = bvc *
 ;c = checksum
 ;v = v-flag clear
@@ -298,7 +298,6 @@ ___			= $ff
 			;XXX TODO if we would swap nibbles on certain places, we could reuse tables easier (11111000_hi -> 44444000_lo), but this would break the eor checksum scheme
 			;XXX TODO if there's tables with the same bit ordern and pattern, we could save hi and low nibbles in there, but need to and #$xx before adding second nibble
 .read_loop
-			ldx #$3e
 			lda $1c01				;22333334
 			sax <.threes + 1
 			;arr #$c1				;22200000
@@ -316,11 +315,6 @@ ___			= $ff
 			sta <.chksum2 + 1
 			lda $1c01				;44445555	second read
 			ldx #$0f
-			;ldx #$07
-			;ror
-			;sax?
-			;and #$f8
-			;tay
 			sax <.fives + 1				;XXX TODO 44444555 -> put bit  to position 6? -> 02200222_lo can be reused? but need highbits?
 								;XXX TODO ldx #$f8 ror sax 4th arr #$07 tay -> 5xxxxx55_hi + bit 2 in carry
 			arr #$f0
@@ -350,34 +344,23 @@ ___			= $ff
 			sta <.chksum + 1
 
 			lax $1c01				;77788888	forth read
-			;lda $1c01
-			;sta <.eigths + 1
-			;asr #$40
-			;tay
-
-			;asl
-			;tax
-			;arr #$80
-			;tay
-			asr #$40				;ora #$11011111 would also work, and create an offset of $1f? Unfortunatedly the tab then wraps but okay when in ZP :-(
+			asr #$40				;ora #$10111111 would also work, and create an offset of $1f? Unfortunatedly the tab then wraps but okay when in ZP :-(
 								;XXX TODO also and #$40 is okay, as it is just a single bit and shifting the second half of that tab?
 			tay
 								;can we reuse that trick to decode 7 bits at once somewhere?!
 			lda .tab7d788888_lo,x			;this table decodes bit 0 and bit 2 of quintuple 7 and whole quintuple 8, so overall 7 bits
-			ldx #$07				;delay upcoming adc as long as possible, as it clears the v flag
 !if .GCR_125 = 1 {
 .sevens			adc .tab0070dd77_hi,y			;clears v-flag, decodes the remaining bits of quintuple 7, no need to set x to 3, f is enough
 } else {
 .sevens			adc .tab00700077_hi,y			;ZP! clears v-flag, decodes the remaining bits of quintuple 7
 }
 			pha					;$0101
+			ldx #$07				;mask for .....222
 			lda $1c01				;11111222	fifth read
-			;ldx #$06
 			sax <.twos + 1
-			;asr #$f9
-			;lsr -> threes table could be used
 			and #$f8				;XXX TODO could shift with asr and compress ones table, or use ora #$07 to wipe out bits 0..2?
 			tay
+			ldx #$3e
 								;XXX TODO with shift, bit 2 of twos is in carry and could be added as +0 +4?
 .gcr_slow2		bvs .read_loop
 			bvs .read_loop
@@ -418,6 +401,7 @@ ___			= $ff
 .tab0070dd77_hi
                         !byte                          $b0, $80, $a0, ___, $b0, $80, $a0, ___, $b0, $80, $a0
 }
+
 +
 			;$01 ora ($xx,x)
 			;$1c top
@@ -444,26 +428,48 @@ ___			= $ff
 			;
 			;----------------------------------------------------------------------------------------------------
 
-.start_send							;entered with c = 0
-			lda #.preloop - .branch - 2		;be sure branch points to preloop
-			sta .branch + 1
-			ldy #$03 + CONFIG_DECOMP		;num of preamble bytes to xfer. With or without barrier, depending on stand-alone loader or not
-.preloop
-			lax <.preamble_data,y			;meh, 16 bit, lax xx,y would be 8 bit
-			ldx #$09				;masking value
-			sbx #$00				;scramble byte while sending, enough time to do so, preamble is called via jsr, so plenty of time between sent bytes
-			eor <.ser2bin,x				;swap bits 3 and 0 if they differ, table is 4 bytes only
-			ldx #$0a				;masking value for later sax $1800 and for preamble encoding
-			bne .preamble_entry			;could work with dop here (skip pla), but want to prefer data_entry with less cycles on shift over
 .send_sector_data_setup
 			lda #.sendloop - .branch - 2		;redirect branch to sendloop
 			sta .branch + 1				;meh, sta exists twice, but can't be saved
-			ldy <.preamble_data + 0			;blocksize + 1, could store that val in an extra ZP-addr, waste 1 byte compared to this solution and save 2 cycles on the dey
-			dey
+			lda #$68				;place mnemonic pla in highbyte
+			sta .sendloop
+			ldy <.block_size			;blocksize + 1
 			inx					;x = $0b -> indicate second round, does not hurt the sax
-.sendloop							;send the data block
-			pla					;just pull from stack instead of lda $0100,y, sadly no tsx can be done, due to x being destroyed
-.preamble_entry
+			bne .sendloop				;could work with dop here (skip pla), but want to prefer data_entry with less cycles on shift over
+.start_send							;entered with c = 0
+			ldy #$03 + CONFIG_DECOMP + 1		;num of preamble bytes to xfer. With or without barrier, depending on stand-alone loader or not
+-
+			lax <.preamble_data - 1,y
+			ldx #$09				;masking value
+			sbx #$00				;scramble byte while sending, enough time to do so, preamble is called via jsr, so plenty of time between sent bytes
+			eor <.ser2bin,x				;swap bits 3 and 0 if they differ, table is 4 bytes only
+			sta <.preamble_data - 1,y		;meh, 16 bit
+			dey
+			bne -
+
+			lda #.preloop - .branch - 2		;be sure branch points to preloop
+			sta .branch + 1
+			sty .sendloop
+			ldx #$0a				;masking value for later sax $1800 and for preamble encoding
+			ldy #$03 + CONFIG_DECOMP		;num of preamble bytes to xfer. With or without barrier, depending on stand-alone loader or not
+.preloop
+.sendloop = * + 2						;send the data block
+			lda .preamble_data,y
+								;just pull from stack instead of lda $0100,y, sadly no tsx can be done, due to x being destroyed
+
+								;our possibiloities to send bits:
+								;...-0.1.
+								;...10.-.
+
+								;...+2.3.
+								;...32.-.
+
+								;...-4.5.
+								;...54.-.
+
+								;...+6.7.
+								;...76.-.
+
 			bit $1800
 			bmi *-3
 			sax $1800				;76540213	-> ddd-0d1d
@@ -560,6 +566,7 @@ ___			= $ff
 			; RECEIVE/WAIT FOR A BYTE FROM HOST
 			;
 			;----------------------------------------------------------------------------------------------------
+
 .get_byte
 
 			ldy #$80				;expect a whole new byte and start with a free bus
@@ -621,6 +628,10 @@ ___			= $ff
 
 			;load file, file number is in A
 .load_file
+!if .LOAD_IN_ORDER = 1 {
+			ldy #$00
+			sty .desired_sect
+}
 			cmp #BITFIRE_RESET
 			bne *+5
 			jmp (.reset_drive)
@@ -1111,6 +1122,15 @@ ___			= $ff
 }
 								;96 cycles
 			ldy <.wanted,x				;sector on list?
+!if .LOAD_IN_ORDER = 1 {
+			lda <.desired_sect
+			cmp #.LOAD_IN_ORDER_LIMIT
+			bcs +
+			cpy <.desired_sect
+			bne .retry_no_count
++
+}
+
 !if .FORCE_LAST_BLOCK = 1 {
 			cpy <.last_block_num			;current block is last block on list?
 			bne .not_last				;nope continue
@@ -1174,11 +1194,15 @@ ___			= $ff
 .retry_no_count
 			jmp .next_sector			;will be sbc (xx),y if disabled
 .read_sector_back
-			;6 cycles of 15 passed, another 9 can pass?
+			;7 cycles need to pass
+
 			clv
+			bit $ea
+			nop
 								;checksum
 			lax $1c01				;44445555
 			bvc *
+			clv
 			arr #$f0
 			clv					;after arr, as it influences v-flag
 			tay					;44444---
@@ -1188,13 +1212,13 @@ ___			= $ff
 			sbx #.CHECKSUM_CONST1			;4 bits of a trailing zero after checksum
 			bne .retry_no_count			;check remaining nibble if it is $05
 }
+!if .SANCHECK_TRAILING_ZERO = 1 {
 			ldx $1c01
 			bvc *
-!if .SANCHECK_TRAILING_ZERO = 1 {
 			cpx #.CHECKSUM_CONST2			;0 01010 01 - more traiing zeroes
 			bne .retry_no_count
 }
-!if .SANCHECK_TRAILING_ZERO = 1 {
+!if .SANCHECK_TRAILING_ZERO = 1 {				;disabled this nibble, as it makes floppy hang sometimes on upper tracks :-(
 			lda $1c01
 			and #$e0
 			cmp #.CHECKSUM_CONST3 & $e0		;010 xxxxx - and more trailing zeroes, last nibble varies on real hardware
@@ -1224,6 +1248,9 @@ ___			= $ff
 			;
 			;----------------------------------------------------------------------------------------------------
 .setup_send
+!if .LOAD_IN_ORDER = 1 {
+			inc .desired_sect
+}
 			cmp <.last_block_num			;compare once when code-path is still common, carry is not tainted until needed
 			sta <.block_num
 			tax					;is needed then however to restore flags, but cheaper
@@ -1278,6 +1305,7 @@ ___			= $ff
 			;
 			;----------------------------------------------------------------------------------------------------
 .preamble							;y = blocksize
+			sty <.block_size
 			iny					;set up num of bytes to be transferred
 			sty <.preamble_data + 0			;used also as send_end on data_send by being decremented again
 
