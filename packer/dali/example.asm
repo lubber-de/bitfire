@@ -1,5 +1,10 @@
 !cpu 6510
-		* = $1000
+		* = $0801
+                !byte $0b,$08
+		!word 1602
+		!byte $9e
+		!text "2061"
+		!byte $00,$00,$00
 
 		sei
 		lda #$35
@@ -21,8 +26,13 @@
 
 		jsr .timer_start
 
-		ldx #<data_start
-		lda #>data_start
+		lda data_start
+		sta <lz_dst + 0
+		lda data_start + 1
+		sta <lz_dst + 1
+
+		ldx #<(data_start + 2)
+		lda #>(data_start + 2)
 
 		jsr depack
 
@@ -97,10 +107,11 @@
 		!scr "0123456789abcdef"
 
 !align 255,0
-depack
+depack_
 !src "dzx0_dali.asm"
-!warn "depacker size: ", * - depack
+!warn "depacker size: ", * - depack_
 
-;		* = $6a61
+		; * = $6b00
 data_start
-!bin "testfile.lz",,4
+!bin "testfile.lz",,2
+		!warn *

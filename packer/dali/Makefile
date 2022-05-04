@@ -1,11 +1,17 @@
 ACME ?= acme
 ACME_OPTS ?= -f cbm
-DALI_CFLAGS ?= $(CFLAGS) -Os -Wall
-CC ?= gcc
-SALVADOR_PATH = salvador
-SALVADOR_CFLAGS = -O3 -g -fomit-frame-pointer -Isrc/libdivsufsort/include -Isrc -fPIC
-SALVADOR_CC = gcc
-SALVADOR_OBJS = $(SALVADOR_PATH)/obj/src/*.o $(SALVADOR_PATH)/obj/src/libdivsufsort/lib/*.o
+SALVADOR_PATH = salvador/src
+SALVADOR_LIB_PATH = $(SALVADOR_PATH)/libdivsufsort/lib
+DALI_INCLUDES = $(SALVADOR_PATH)/libdivsufsort/include
+DALI_CFLAGS ?= $(CFLAGS) -O3 -g -Wall -fomit-frame-pointer -I$(DALI_INCLUDES)
+DALI_CC = gcc
+DALI_OBJS += $(SALVADOR_PATH)/expand.o
+DALI_OBJS += $(SALVADOR_PATH)/matchfinder.o
+DALI_OBJS += $(SALVADOR_PATH)/shrink.o
+DALI_OBJS += $(SALVADOR_LIB_PATH)/divsufsort.o
+DALI_OBJS += $(SALVADOR_LIB_PATH)/divsufsort_utils.o
+DALI_OBJS += $(SALVADOR_LIB_PATH)/sssort.o
+DALI_OBJS += $(SALVADOR_LIB_PATH)/trsort.o
 
 V ?= 0
 ifeq ($(V),1)
@@ -16,23 +22,26 @@ endif
 
 all: dali
 
-dali: dali.c sfx_small.h sfx_fast.h salvador.a
+%.o: %.c
+	$(VR)$(DALI_CC) $(DALI_CFLAGS) -c $< -o $@
+
+dali.o: dali.c sfx_small.h sfx_fast.h
 	@echo "Building dali..."
-	$(VR)$(CC) $(DALI_CFLAGS) -o $@ $^
+	$(VR)$(DALI_CC) $(DALI_CFLAGS) -c $< -o $@
+
+dali: dali.o $(DALI_OBJS)
+	$(VR)$(DALI_CC) $^ $(LDFLAGS) -o $@
 	$(VR)strip $@
 
-salvador.a:
-	@echo "Creating salvador library..."
-	$(VR)make CFLAGS='$(SALVADOR_CFLAGS)' CC='$(SALVADOR_CC)' -C $(SALVADOR_PATH)
-	$(VR)ar rcs $@ $(SALVADOR_OBJS)
-	$(VR)objcopy --redefine-sym main=salvador_main $@
+testfile.lz: ../../benchmark/files/a
+	./dali --no-inplace -o $@ $<
 
-depack.prg: depack.asm dzx0.asm ../../benchmark/files/a.lz
-	$(ACME) $(ACME_OPTS) -o $@ $<
+example.prg: example.asm dali dzx0_dali.asm testfile.lz
+	$(VR)$(ACME) $(ACME_OPTS) -o $@ $<
 
 sfx_small.h: sfx.asm
-	@echo "Compiling sfx code for dali..."
-	$(VR)$(ACME) $(ACME_OPTS) -l $(basename $@).lst -o $(basename $@) $<
+	@echo "Creating sfx_small.h..."
+	$(VR)$(ACME) $(ACME_OPTS) --labeldump $(basename $@).lst -o $(basename $@) $<
 	$(VR)grep 'DALI' $(basename $@).lst | sed -e 's/[[:space:]]*;[[:space:]]*.*//g' -e 's/[[:space:]]*//g' -e 's/\=\$$/ 0x/g' -e 's/^/#define /' > $@
 	$(VR)echo 'static const char decruncher_small[] = {' >> $@
 	@#create a hexdump, add a marker (+) where lines are truncated (each 50 chars = 8 bytes per line), substitute marker (+) with newline (use tr here, as bsd-sed fails on \n), add identation to each line
@@ -41,8 +50,8 @@ sfx_small.h: sfx.asm
 	$(VR)rm $(basename $@).lst $(basename $@)
 
 sfx_fast.h: sfx.asm
-	@echo "Compiling sfx code for dali..."
-	$(VR)$(ACME) $(ACME_OPTS) -DSFX_FAST=1 -l $(basename $@).lst -o $(basename $@) $<
+	@echo "Creating sfx_fast.h..."
+	$(VR)$(ACME) $(ACME_OPTS) -DSFX_FAST=1 --labeldump $(basename $@).lst -o $(basename $@) $<
 	$(VR)grep 'DALI' $(basename $@).lst | sed -e 's/[[:space:]]*;[[:space:]]*.*//g' -e 's/[[:space:]]*//g' -e 's/\=\$$/ 0x/g' -e 's/^/#define /' > $@
 	$(VR)echo 'static const char decruncher[] = {' >> $@
 	@#create a hexdump, add a marker (+) where lines are truncated (each 50 chars = 8 bytes per line), substitute marker (+) with newline (use tr here, as bsd-sed fails on \n), add identation to each line
@@ -51,5 +60,7 @@ sfx_fast.h: sfx.asm
 	$(VR)rm $(basename $@).lst $(basename $@)
 
 clean:
-	$(VR)-rm dali sfx_small.h sfx_fast.h depack.prg salvador.a
-	$(VR)make -C salvador clean
+	$(VR)-rm dali *.o sfx_small.h sfx_fast.h example.prg testfile.lz
+	$(VR)-rm $(SALVADOR_PATH)/*.o
+	$(VR)-rm $(SALVADOR_LIB_PATH)/*.o
+	$(VR)-make -C salvador clean

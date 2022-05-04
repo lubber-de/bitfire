@@ -10,8 +10,13 @@
 
 #define FALSE 0
 #define TRUE 1
-#define DALI_BITS_LEFT 0
+#define DALI_BITS_LEFT 1
 #define DALI_ELIAS_LE 1
+
+//include salvador and rename main
+#define main salvador_main
+#include "salvador/src/salvador.c"
+#undef main
 
 typedef struct ctx {
     unsigned char *packed_data;
@@ -51,9 +56,9 @@ typedef struct ctx {
     int sfx_size;
     char *sfx_code;
     int lz_bits;
-} ctx;
 
-void salvador_main();
+    int exit_on_warn;
+} ctx;
 
 static int read_number(char* arg, char* argname, int limit) {
     int number;
@@ -395,17 +400,17 @@ void write_reencoded_stream(ctx* ctx) {
             printf("original: $%04x-$%04lx ($%04lx) 100%%\n", ctx->cbm_orig_addr, ctx->cbm_orig_addr + ctx->unpacked_size, ctx->unpacked_size);
             printf("packed:   $%04x-$%04lx ($%04lx) %3.2f%%\n", ctx->cbm_packed_addr, ctx->cbm_packed_addr + ctx->packed_index + 2, ctx->packed_index + 2, ((float)(ctx->packed_index) / (float)(ctx->unpacked_size) * 100.0));
             if ((ctx->cbm_packed_addr >= 0xd000 && ctx->cbm_packed_addr < 0xe000) || (ctx->cbm_packed_addr < 0xd000 && ctx->cbm_packed_addr + ctx->packed_index + 2 > 0xd000)) {
-                fprintf(stderr, "Error: Packed file lies in I/O-range from $d000-$dfff\n");
-                exit(1);
+                fprintf(stderr, "Warning: Packed file lies in I/O-range from $d000-$dfff\n");
+                if (ctx->exit_on_warn) exit(1);
             }
 
             /* little endian */
             file_write_byte(ctx->cbm_packed_addr & 255, fp);
             file_write_byte((ctx->cbm_packed_addr >> 8) & 255, fp);
 
-            /* big endian, as read backwards by depacker */
-            file_write_byte((ctx->cbm_orig_addr >> 8) & 255, fp);
+            /* little endian */
             file_write_byte(ctx->cbm_orig_addr & 255, fp);
+            file_write_byte((ctx->cbm_orig_addr >> 8) & 255, fp);
         } else {
             printf("original: $%04x-$%04lx ($%04lx) 100%%\n", 0, ctx->unpacked_size, ctx->unpacked_size);
             printf("packed:   $%04x-$%04lx ($%04lx) %3.2f%%\n", 0, ctx->packed_index, ctx->packed_index, ((float)(ctx->packed_index) / (float)(ctx->unpacked_size) * 100.0));
@@ -544,7 +549,7 @@ void do_reencode(ctx* ctx) {
     if (ctx->unpacked_size != 0) {
         if (fwrite(ctx->unpacked_data, sizeof(char), ctx->unpacked_size, sfp) != ctx->unpacked_size) {
             fprintf(stderr, "Error: Cannot write clamped file\n");
-            perror("fwrite");
+            remove(ctx->clamped_name);
             exit(1);
         }
     }
@@ -638,6 +643,7 @@ int main(int argc, char *argv[]) {
     ctx.sfx_cli = FALSE;
     ctx.sfx_small = FALSE;
     ctx.sfx_code = NULL;
+    ctx.exit_on_warn = FALSE;
 
     for (i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "-", 1) || !strncmp(argv[i], "--", 2)) {
@@ -649,6 +655,8 @@ int main(int argc, char *argv[]) {
             } else if (!strcmp(argv[i], "--prefix-file")) {
                 i++;
                 ctx.prefix_name = argv[i];
+            } else if (!strcmp(argv[i], "--exit_on_warn")) {
+                ctx.exit_on_warn = TRUE;
             } else if (!strcmp(argv[i], "--no-inplace")) {
                 ctx.inplace = FALSE;
             } else if (!strcmp(argv[i], "--small")) {
@@ -690,7 +698,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("dali v0.3 - a zx0-reencoder for bitfire by Tobias Bindhammer\n");
+    printf("dali v0.3.2 - a zx0-reencoder for bitfire by Tobias Bindhammer\n");
     printf("underlying zx0-packer salvador by Emmanuel Marty\n");
 
     if (argc == 1) {
@@ -708,6 +716,7 @@ int main(int argc, char *argv[]) {
                         "  --prefix-file [file]        Use preceeding data from [file] as dictionary.\n"
                         "  --relocate-packed [num]     Relocate packed data to desired address [num] (resulting file can't de decompressed inplace!)\n"
                         "  --relocate-origin [num]     Set load-address of source file to [num] prior to compression. If used on bin-files, load-address and depack-target is prepended on output.\n"
+                        "  --exit_on_warn              Exit on warnings like they happen when crossing the i/o-range.\n"
                         ,argv[0]);
         exit(1);
     }

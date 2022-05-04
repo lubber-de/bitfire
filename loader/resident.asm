@@ -29,7 +29,12 @@
 !src "config.inc"
 !src "constants.inc"
 
-LZ_BITS_LEFT		= 0
+LZ_BITS_LEFT		= 1				;shift lz_bits left or right, might make a difference on testing and init, left is the original way
+
+;if you do not make use of the nmi-gaps, these optimizations will be enabled, with gaps, they don't fit :-(
+OPT_FULL_SET		= CONFIG_NMI_GAPS xor 1		;adds 1,4% more performance, needs 10 bytes extra
+OPT_PRIO_LEN2		= CONFIG_NMI_GAPS xor 1		;adds 0,1% more performance, needs 4 bytes extra
+OPT_LZ_INC_SRC		= 1				;give non equal case priority on lz_src checks
 
 !if CONFIG_DECOMP = 0 {
 bitfire_load_addr_lo	= CONFIG_ZP_ADDR + 0		;in case of no loadcompd, store the hi- and lobyte of loadaddress separatedly
@@ -105,13 +110,6 @@ link_cia2_type		;%00000100
 			nop
 }
 
-!if CONFIG_FRAMEWORK = 1 & CONFIG_FRAMEWORK_FRAMECOUNTER = 1 {
-link_frame_count
-			!word 0
-}
-			;this is the music play hook for all parts that they should call instead of for e.g. jsr $1003, it has a variable music location to be called
-			;and advances the frame counter if needed
-
 			;those calls could be a macro, but they are handy to be jumped to so loading happens while having all mem free, and code is entered afterwards
 ;	!if CONFIG_DECOMP = 1 {
 ;;			;expect $01 to be $35
@@ -131,6 +129,10 @@ link_frame_count
 ;			rts
 ;	}
 
+;---------------------------------------------------------------------------------
+;LOADER STUFF
+;---------------------------------------------------------------------------------
+
 !if CONFIG_LOADER = 1 {
 			;XXX we do not wait for the floppy to be idle, as we waste enough time with depacking or the fallthrough on load_raw to have an idle floppy
 bitfire_send_byte_
@@ -140,46 +142,38 @@ bitfire_send_byte_
 			lda #$3f
 .ld_loop
 			eor #$20
-			tax				;$1f/$3f
-			bcc +
-			sbx #$10			;$0f/$2f
-+
-			jsr .ld_set_dd02		;waste lots of cycles upon write, so bits do not arrive to fast @floppy
+			jsr .ld_set_dd02		;waste lots of cycles upon write, so bits do not arrive too fast @floppy
 			lsr <filenum
 			bne .ld_loop
-			jsr .ld_set_dd02		;seems to be enough cycles to wait (16)
-			tax				;x is always $3f after 8 rounds (8 times eor #$20)
-;-
-;							;XXX TODO possibly still save here? how many cycles does it take for busy to become high and bit to count?
-;			bit $dd00			;/!\ ATTENTION wait for drive to become busy, also needed, do not remove, do not try again to save cycles/bytes here :-(
-;			bmi -				;waiting with pha/pla would also help, or even a jsr call to waste 12 cycles
-.ld_set_dd02
+			;clc				;force final value to be $3f again (bcc will hit in later on)
+.ld_set_dd02						;moved loop code to here, so that enough cycles pass by until $dd02 is set back to $3f after whole byte is transferred, also saves a byte \o/
+			tax				;x = $1f/$3f / finally x is always $3f after 8 rounds (8 times eor #$20)
+			bcs +
+			sbx #$10			;x = $0f/$2f
++
 			stx $dd02			;restore $dd02
-							;filenum and thus barrier is $00 now, so whenever we enter load_next for a first time, it will load until first block is there
-.ld_pend
-			rts
+			rts				;filenum and thus barrier is $00 now, so whenever we enter load_next for a first time, it will load until first block is there
 
 	!if CONFIG_FRAMEWORK = 1 {
 link_load_next_raw
 			lda #BITFIRE_LOAD_NEXT
 link_load_raw
 	}
-
 bitfire_loadraw_
 			jsr bitfire_send_byte_		;easy, open...
 -
 .ld_load_raw
 			jsr .ld_pblock			;fetch all blocks until eof
 			bcc -
-			;rts				;just run into ld_pblock code again that will then jump to .ld_pend and rts
+			;rts				;just run into ld_pblock code again that will then branch to rts upon block poll
 .ld_pblock
-			lda $dd00			;bit 6 is always set if not ready or idle/EOF so no problem with just an ASL
-			asl				;focus on bit 7 and 6 and copy bit 7 to carry (set if floppy is idle/eof is reached)
-			bmi .ld_pend			;block ready?
+			lda $dd00			;bit 6 is always set if not ready or idle/EOF
+			anc #$c0			;focus on bit 7 and 6 and copy bit 7 to carry (set if floppy is idle/eof is reached)
+			bne .ld_en_exit + 1		;block ready? if so, a = 0 (block ready + busy) if not -> rts
 .ld_pblock_
-			ldy #$05			;5 bytes
-			lda #$00			;set up target -> sta preamble,y
-			ldx #<preamble
+			ldy #$05			;fetch 5 bytes of preamble
+			;lda #$00			;is already zero due to anc #$c0, that is why we favout anc #$co over asl, as we save a byte
+			ldx #<preamble			;target for received bytes
 			jsr .ld_set_block_tgt		;load 5 bytes preamble - returns with C = 0 at times
 
 			ldy <block_length		;load blocklength
@@ -226,10 +220,10 @@ bitfire_ntsc2		and $dd00
 .ld_store		sta $b00b,y
 .ld_gentry
 			lax <CONFIG_LAX_ADDR
-bitfire_ntsc3		adc $dd00			;XXX $DD = CMP $xxxx,x  ;a is anything between 38 and 3b after add (37 + 00..03 + carry), so bit 3, 4 and 5 are always set, bits 6 and 7 are given by floppy
+bitfire_ntsc3		adc $dd00
 							;%xx1110xx
 .ld_gend
-			stx $dd02			;carry is cleared now, we can exit here and do our rts with .ld_gend
+			stx $dd02			;carry is cleared now after last adc, we can exit here with carry cleared (else set if EOF) and do our rts with .ld_gend
 			lsr				;%xxx1110x
 			lsr				;%xxxx1110
 bitfire_ntsc4		bpl .ld_gloop			;BRA, a is anything between 0e and 3e
@@ -253,8 +247,14 @@ bitfire_ntsc4		bpl .ld_gloop			;BRA, a is anything between 0e and 3e
 			+set_lz_bit_marker
 			sta <lz_bits
 			inc <lz_src + 0 		;postponed pointer increment, so no need to save A on next_page call
-			beq .lz_inc_src2
-.lz_inc_src2_
+!if OPT_LZ_INC_SRC = 1 {
+			beq .lz_inc_src_refill
+.lz_inc_src_refill_
+} else {
+			bne +
+			+inc_src_ptr
++
+}
 			txa				;restore fetched bits, also postponed, so A can be trashed on lz_inc_src above
 			bcs .lz_lend			;last bit fetched?
 .lz_get_loop
@@ -262,6 +262,7 @@ bitfire_ntsc4		bpl .ld_gloop			;BRA, a is anything between 0e and 3e
 .lz_length_16_
 			rol				;shift in new payload bit
 			bcs .lz_length_16		;first 1 drops out from lowbyte, need to extend to 16 bit, unfortunatedly this does not work with inverted numbers
+.lz_length
 			+get_lz_bit			;fetch control bit
 			bcc .lz_get_loop		;need more bits
 			beq .lz_refill_bits		;buffer is empty, fetch new bits
@@ -272,21 +273,34 @@ bitfire_ntsc4		bpl .ld_gloop			;BRA, a is anything between 0e and 3e
 			tya				;was lda #$01, but A = 0 + upcoming rol makes this also start with A = 1
 			jsr .lz_length_16_		;get up to 7 more bits
 			sta <lz_len_hi			;and save hibyte
-			pla				;restore lobyte
-;			bne .lz_not_zero		;was the lobyte zero?
-;			pla				;pull lowbyte of last jsr-call from stack
-;			pha				;restore
-;			;eor #<.lz_jsr_addr
-;			bmi +				;eof and match case, no need to decrement lz_len_hi
-;			dec <lz_len_hi			;decrement lz_len_hi
-;+
-;			tya
-
-			bne .lz_not_zero		;was the lobyte zero?
-			dec <lz_len_hi			;yes, so decrement hibyte beforehand to avoid expensive checks later on, except for one case
-			tya				;keep Z = 0, (but not needed in case of eof, the dec also results in 0 there)
-
-.lz_not_zero
+			ldx #$b0
+		!if OPT_FULL_SET = 1 {			;transform bcs .lz_cp_page to a lda #$01 and by that do not waste a single cycle on a page check if not needed
+			lda #.lz_cp_page - .lz_set1 - 2	;we are very lucky here, we can jump in two steps to bcs of set1 and then to lz_cp_page, so we can set up both bcs with the same value ($c0 that is) and reach or goal in two hops, while keeping the setup code small
+			;ldy #.lz_cp_page - .lz_set2 - 2
+			bne +				;annoying, no dop or top possible, need to skip too many bytes
+.lz_lenchk_dis
+.lz_eof
+			pha
+			ldx #$a9
+			lda #$01
+			;iny				;y and a = 1
+			;tya
++
+			stx .lz_set1
+			stx .lz_set2
+			sta .lz_set1 + 1
+			sta .lz_set2 + 1
+			;ldy #$00
+			pla
+		} else {				;only transform bcs .lz_cp_page to anything that is not executes, like a nop #imm
+			pla
+			top
+.lz_lenchk_dis
+.lz_eof
+			ldx #$80
+			stx .lz_set1
+			stx .lz_set2
+                }
 			rts
 
 			;------------------
@@ -311,42 +325,44 @@ bitfire_loadcomp_
 			sta .lz_skip_poll + 1
 			stx .lz_skip_fetch
 
-			jsr .lz_next_page_		;shuffle in data first until first block is present, returns with Y = 0, X = 0
+			jsr .lz_next_page_		;shuffle in data first until first block is present, returns with Y = 0, but on loadcomp only, so take care!
 	}
-							;copy over end_pos and lz_dst from stream
+							;copy over end_pos and lz_dst from stream XXX would also work from x = 0 .. 2 -> lax #0 tay txa inx cpx #2 -> a = 1 + sec at end
 			ldy #$00			;needs to be set in any case, also plain decomp enters here
-			ldx #$02
+			sty .lz_offset_lo + 1		;initialize offset with $0000
+			sty .lz_offset_hi + 1
+			ldx #$ff
 -
 			lda (lz_src),y
-			sta <lz_dst + 0 - 1, x
+			sta <lz_dst + 1, x
 			inc <lz_src + 0
 			bne +
 			+inc_src_ptr
 +
-			txa				;A = 1 after loop ends, in case fetch another byte? First byte should be lz_bits?
-			dex
-			bne -
-			stx .lz_offset_lo + 1		;initialize offset with $0000
-			stx .lz_offset_hi + 1
-			stx <lz_len_hi			;reset len - XXX TODO could also be cleared upon installer, as the depacker leaves that value clean again
-			sec				;needs to be set, is set after send_byte but not if entering via link_decomp
-			beq .lz_start_depack		;start with a literal, X = 0, still annoying
+			inx				;dex + sec set
+			beq -
+			txa				;save x prior to decrement, so that A = 1 after loop ends, in case fetch another byte? First byte should be lz_bits?
+			sec
+			bne .lz_start_depack		;start with a literal, X = 0, still annoying, but now need to reverse bitorder for lz_bits this way
 
 			;------------------
 			;SELDOM STUFF
 			;------------------
-.lz_inc_src2
+!if OPT_LZ_INC_SRC = 1 {
+.lz_inc_src_refill
 			+inc_src_ptr
-			bne .lz_inc_src2_
-.lz_inc_src3
+			bne .lz_inc_src_refill_
+.lz_inc_src_match
 			+inc_src_ptr
-			bcs .lz_inc_src3_
-.lz_dst_inc
-			inc <lz_dst + 1
-			bcs .lz_dst_inc_
+			bne .lz_inc_src_match_
+.lz_inc_src_lit
+			+inc_src_ptr
+			bcs .lz_inc_src_lit_
+}
 
 !if CONFIG_NMI_GAPS = 1 {
 			!ifdef .lz_gap2 {
+				!warn "disabling some optimizations to make gaps fit"
 				!warn .lz_gap2 - *, " bytes left until gap2"
 			}
 !align 255,0
@@ -366,17 +382,76 @@ bitfire_loadcomp_
 }
 }
 			;------------------
+			;MATCH
+			;------------------
+-
+			+get_lz_bit			;fetch payload bit
+			rol				;add bit to number
+.lz_match
+			+get_lz_bit			;fetch control bit
+			bcc -				;not yet done, fetch more bits
+
+			bne +				;last bit or bitbuffer empty? fetched 1 to 4 bits now
+			jsr .lz_refill_bits		;refill bitbuffer
+			beq .lz_eof			;so offset was $100 as lowbyte is $00, only here 4-8 bits are fetched, this is our eof marker -> disable len-check and rts
++
+			sbc #$01			;subtract 1, elias numbers range from 1..256, we need 0..255
+			lsr				;set bit 15 to 0 while shifting hibyte
+			sta .lz_offset_hi + 1		;hibyte of offset
+
+			lda (lz_src),y			;fetch another byte directly, same as refill_bits...
+			ror				;and shift -> first bit for lenth is in carry, and we have %0xxxxxxx xxxxxxxx as offset
+			sta .lz_offset_lo + 1		;lobyte of offset
+
+			inc <lz_src + 0			;postponed, so no need to save A on next_page call
+!if OPT_LZ_INC_SRC = 1 {
+			beq .lz_inc_src_match
+.lz_inc_src_match_
+} else {
+			bne +
+			+inc_src_ptr
++
+}
+			lda #$01			;fetch new number, start with 1
+		!if OPT_PRIO_LEN2 = 1 {
+			ldy #$fe			;XXX preferring that path gives ~0,1% speed gain
+			bcs .lz_match_len2
+                } else {
+			bcs .lz_match_big		;length = 1, do it the very short way
+                }
+-
+			+get_lz_bit			;fetch more bits
+			rol
+			+get_lz_bit
+			bcc -
+
+			bne .lz_match_big
+		!if OPT_PRIO_LEN2 = 1 {
+			ldy #$00
+		}
+			jsr .lz_refill_bits		;fetch remaining bits
+			bcs .lz_match_big		;lobyte != 0? If zero, fall through
+
+			;------------------
 			;SELDOM STUFF
 			;------------------
+.lz_dst_inc
+			inc <lz_dst + 1
+			bcs .lz_dst_inc_
 .lz_clc
 			clc
 			bcc .lz_clc_back
-.lz_cp_page
+.lz_cp_page						;if we enter from a literal, we take care that x = 0 (given after loop run, after length fetch, we force it to zero by tax here), so that we can distinguish the code path later on. If we enter from a match x = $b0 (elias fetch) or >lz_dst_hi + 1, so never zero.
+			txa
+.lz_cp_page_						;a is already 0 if entered here
 			dec <lz_len_hi
-			txa				;much shorter this way. if we recalculate m_src and dst, endcheck also hits in if we end with an multipage match, else maybe buggy?
-			beq .lz_l_page			;if entered from a literal, x == 0
-			tya				;if entered from a match, x is anything between $01 and $ff due to inx stx <lz_dst + 1, except if we would depack to zp?
-			bcs .lz_m_page			;as Y = 0, we can skip the part that does Y = A xor $ff
+			bne +
+			jsr .lz_lenchk_dis
++
+			tax				;check a/x
+			beq .lz_l_page			;do another page
+			tya				;if entered from a match, x is anything between $01 and $ff due to inx stx >lz_dst + 1, except if we would depack to zp on a wrap around?
+			beq .lz_m_page			;as Y = 0 and A = 0 now, we can skip the part that does Y = A xor $ff
 
 			;------------------
 			;POLLING
@@ -385,13 +460,18 @@ bitfire_loadcomp_
 	!if CONFIG_LOADER = 1 {
 			bit $dd00
 			bvs .lz_start_over
-			jsr .ld_pblock_			;yes, fetch another block, call is disabled for plain decomp
+			jsr .ld_pblock			;yes, fetch another block, call is disabled for plain decomp
+		!if OPT_FULL_SET = 1 {
+			lda #$01			;restore initial length val
+                }
 	}
 			;------------------
 			;ENTRY POINT DEPACKER
 			;------------------
 .lz_start_over
-			lda #$01			;we fall through this check on entry and start with literal
+		!if OPT_FULL_SET = 0 {
+			lda #$01			;restore initial length val
+                }
 			+get_lz_bit
 			bcs .lz_match			;after each match check for another match or literal?
 
@@ -407,9 +487,10 @@ bitfire_loadcomp_
 			+get_lz_bit			;fetch payload bit
 			bcc -
 +
-			bne +
+			bne +				;lz_bits ot empty, so was last bit to fetch for #len
 .lz_start_depack
 			jsr .lz_refill_bits
+			beq .lz_cp_page_		;handle special case of length being $xx00
 +
 			tax
 .lz_l_page
@@ -418,23 +499,29 @@ bitfire_loadcomp_
 			sta (lz_dst),y
 
 			inc <lz_src + 0
-			beq .lz_inc_src3
-.lz_inc_src3_
+!if OPT_LZ_INC_SRC = 1 {
+			beq .lz_inc_src_lit
+.lz_inc_src_lit_
+} else {
+			bne +
+			+inc_src_ptr
++
+}
 			inc <lz_dst + 0
 			beq .lz_dst_inc
 .lz_dst_inc_
 			dex
 			bne .lz_cp_lit
-							;XXX TODO we could also just manipulate a branch and make it go to either page handling or fall through? enable branch if 16 bits are fetched and lz_len  > 0? dop or bcs to disable and enable, 80 or b0
-			lda <lz_len_hi			;more pages to copy?
-			bne .lz_cp_page			;happens very seldom
-
+.lz_set1
+		!if OPT_FULL_SET = 0 {			;if optimization is enabled, the lda #$01 is modified to a bcs .lz_cp_page/lda #$01
+			bcc .lz_cp_page			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
+                }
 			;------------------
 			;NEW OR OLD OFFSET
 			;------------------
 							;XXX TODO fetch length first and then decide if literal, match, repeat? But brings our checks for last bit to the end? need to check then on typebit? therefore entry for fetch is straight?
 							;in case of type bit == 0 we can always receive length (not length - 1), can this used for an optimization? can we fetch length beforehand? and then fetch offset? would make length fetch simpler? place some other bit with offset?
-			rol				;was A = 0, C = 1 -> A = 1 with rol, but not if we copy literal this way
+			lda #$01
 			+get_lz_bit
 			bcs .lz_match			;either match with new offset or old offset
 
@@ -452,7 +539,7 @@ bitfire_loadcomp_
 +
 			bne +
 			jsr .lz_refill_bits		;fetch more bits
-			beq .lz_m_page			;XXX TODO sec after sbc #1 is also sufficient, but slower
+			beq .lz_cp_page			;handle special case of length being $xx00
 +
 			sbc #$01			;subtract 1, will be added again on adc as C = 1
 .lz_match_big						;we enter with length - 1 here from normal match
@@ -460,10 +547,10 @@ bitfire_loadcomp_
 			tay
 .lz_m_page
 			eor #$ff			;restore A
-
+.lz_match_len2
 			adc <lz_dst + 0			;add length
 			sta <lz_dst + 0
-			bcs .lz_clc			;/!\ branch happens very seldom, if so, clear carry
+			bcs .lz_clc			;/!\ branch happens very seldom, if so, clear carry, XXX TODO if we would branch to * + 3 and we use $18 as lz_dst, we have our clc there :-( but we want zp usage to be configureable
 			dec <lz_dst + 1			;subtract one more in this case
 .lz_clc_back
 .lz_offset_lo		sbc #$00			;carry is cleared, subtract (offset + 1)
@@ -479,76 +566,31 @@ bitfire_loadcomp_
 			bne .lz_cp_match
 			inx
 			stx <lz_dst + 1			;cheaper to get lz_dst + 1 into x than lz_dst + 0 for upcoming compare
-
-			lda <lz_len_hi			;check for more loop runs
-			bne .lz_cp_page			;do more page runs? Yes? Fall through
+.lz_set2
+		!if OPT_FULL_SET = 0 {
+			bcc .lz_cp_page			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
+                } else {
+			lda #$01
+		}
 .lz_check_poll
 			cpx <lz_src + 1			;check for end condition when depacking inplace, lz_dst + 0 still in X
 .lz_skip_poll		bne .lz_start_over		;-> can be changed to .lz_poll, depending on decomp/loadcomp
 
-			lda <lz_dst + 0
-			eor <lz_src + 0
+			ldx <lz_dst + 0
+			cpx <lz_src + 0
 			bne .lz_start_over
-			beq lz_next_page
+
 							;XXX TODO, save one byte above and the beq lz_next_page can be omitted and lz_next_page copied here again
 			;jmp .ld_load_raw		;but should be able to skip fetch, so does not work this way
 			;top				;if lz_src + 1 gets incremented, the barrier check hits in even later, so at least one block is loaded, if it was $ff, we at least load the last block @ $ffxx, it must be the last block being loaded anyway
 							;as last block is forced, we would always wait for last block to be loaded if we enter this loop, no matter how :-)
-			;------------------
-			;MATCH
-			;------------------
--
-			+get_lz_bit			;fetch payload bit
-			rol				;add bit to number
-.lz_match
-			+get_lz_bit			;fetch control bit
-			bcc -				;not yet done, fetch more bits
-
-			bne +				;last bit or bitbuffer empty? fetched 1 to 4 bits now
-			jsr .lz_refill_bits		;refill bitbuffer
-			beq .lz_eof			;so offset was $100 as lowbyte is $00, only here 4-8 bits are fetched
-+
-			sbc #$01			;subtract 1, elias numbers range from 1..256, we need 0..255
-			lsr				;set bit 15 to 0 while shifting hibyte
-			sta .lz_offset_hi + 1		;hibyte of offset
-
-			lda (lz_src),y			;fetch another byte directly, same as refill_bits...
-			ror				;and shift -> first bit for lenth is in carry, and we have %0xxxxxxx xxxxxxxx as offset
-			sta .lz_offset_lo + 1		;lobyte of offset
-
-			inc <lz_src + 0			;postponed, so no need to save A on next_page call
-			beq .lz_inc_src1
-.lz_inc_src1_
-			lda #$01			;fetch new number, start with 1
-			bcs .lz_match_big		;length = 1, do it the very short way
--
-			+get_lz_bit			;fetch more bits
-			rol
-			+get_lz_bit
-			bcc -
-			bne .lz_match_big
-			jsr .lz_refill_bits		;fetch remaining bits
-;.lz_jsr_addr = * - 1
-;			bcs .lz_match_big		;lobyte != 0?
-			bne .lz_match_big		;lobyte != 0?
-
-			;------------------
-			;SELDOM STUFF
-			;------------------
-
-			inc <lz_len_hi			;need to correct <lz_len_hi
-			bcs .lz_match_big		;and enter match copy loop
-.lz_inc_src1
-			+inc_src_ptr
-			bne .lz_inc_src1_
-
+	!if CONFIG_LOADER = 1 {
 			;------------------
 			;NEXT PAGE IN STREAM
 			;------------------
 lz_next_page
 			inc <lz_src + 1
 .lz_next_page_						;preserves carry and X, clears Y, all sane
-	!if CONFIG_LOADER = 1 {
 .lz_skip_fetch
 			php				;save carry
 			txa				;and x
@@ -566,13 +608,17 @@ lz_next_page
 			pla
 			tax
 			plp
-	}
-.lz_eof
 			rts
+	} else {
+			rts
+	}
+}
+
+;---------------------------------------------------------------------------------
+;FRAMEWORK STUFF
+;---------------------------------------------------------------------------------
 
 !if CONFIG_FRAMEWORK = 1 {
-
-;XXX TODO move away frameworkstuff to $0105 onwards
 	!if CONFIG_FRAMEWORK_BASEIRQ = 1 {
 link_player
 			pha
@@ -596,20 +642,23 @@ link_player
 			pla
 			rti
 	}
-}
-}
 
-!if CONFIG_FRAMEWORK = 1 {
-;add to link_player
-;stop music nmi sets jsr link_music_play_side1 to jmp, start_music to jsr?
+			;this is the music play hook for all parts that they should call instead of for e.g. jsr $1003, it has a variable music location to be called
+			;and advances the frame counter if needed
+
 link_music_play
 	!if CONFIG_FRAMEWORK_FRAMECOUNTER = 1 {
 			inc link_frame_count + 0
 			bne +
 			inc link_frame_count + 1
 +
+	}
 link_music_addr = * + 1
 			jmp link_music_play_side1
+
+	!if CONFIG_FRAMEWORK_FRAMECOUNTER = 1 {
+link_frame_count
+			!word 0
 	}
 }
 

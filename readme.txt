@@ -1,7 +1,7 @@
 What is it
 ----------
 
-Bitfire is a fixed interleave loadersystem with depacker, a basic framework and an image writing tool. Aim was to make the loader as fast as possible while being as tiny as possible. So at some points size and speed had to be traded against each other. An own, however d64-compatible (bam copy is sufficient), file format is introduced to make the code less complex and loading faster. Also, functions that are not used regularly (like turn disk detection) are available as statically linkable functions and thus make the resident part on c64 side even smaller. Being that tiny ($8b to $1ea bytes, depending on configuration) and still fast, makes it perfect for being used in demos. The imaging-tool creates diskimages with all demofiles and a dirart on it. Also it is accompanied by a lz-packer based on doynamite, however smaller in code and a bit faster than that, while yielding nearly the same results. The packer supports a lot of functionality and thus makes other tools obsolete, as it can split files, reference data in previous files, write in several formats, create sfx and much more. The framework supports a base irq and safe loading hooks, as well as a loadnext functionality (but this feature is also available without framework, see examples), however loading by filenumber is still supported if your demo is in need of random file access (like the comaland endpart)
+Bitfire is a fixed interleave loadersystem with depacker, a basic framework and an image writing tool. Aim was to make the loader as fast as possible while being as tiny as possible. So at some points size and speed had to be traded against each other. An own, however d64-compatible (bam copy is sufficient), file format is introduced to make the code less complex and loading faster. Also, functions that are not used regularly (like turn disk detection) are available as statically linkable functions and thus make the resident part on c64 side even smaller. Being that tiny ($84 to $200 bytes, depending on configuration) and still fast, makes it perfect for being used in demos. The imaging-tool creates diskimages with all demofiles and a dirart on it. Also it is accompanied by a lz-packer based on doynamite, however smaller in code and a bit faster than that, while yielding nearly the same results. The packer supports a lot of functionality and thus makes other tools obsolete, as it can split files, reference data in previous files, write in several formats, create sfx and much more. The framework supports a base irq and safe loading hooks, as well as a loadnext functionality (but this feature is also available without framework, see examples), however loading by filenumber is still supported if your demo is in need of random file access (like the comaland endpart)
 
 dali
 ----
@@ -35,7 +35,7 @@ Input file is a raw binary without load-address, the load-address needed is take
 
 --from [$num]
 --to [$num]
-With those two flags the file can be cut into desired slices that are then fed to the packer. This way the file can easily split up into a portion that gies up until $d000 and a portion that gies from $d000-$ffff (remember, no loading under i/o possible)
+With those two flags the file can be cut into desired slices that are then fed to the packer. This way the file can easily split up into a portion that goes up until $d000 and a portion that goes from $d000-$ffff (remember, no loading under i/o possible)
 
 --prefix-from [$num]
 Use preceeding data of file as dictionary. This requires, that the data referenced here is also in memory at the same location when depacking. You can specify from which address on the dictionary should be used.
@@ -124,7 +124,7 @@ For a better understanding of the intended building process, an example Makefile
 
 NTSC
 ----
-NTSC support is broken at the moment
+NTSC support is working in vice, not tested on real hardware
 
 Add/remove functionality
 ------------------------
@@ -153,7 +153,7 @@ Functions via loader_acme.inc
 
 When includng the loader/loader_acme.inc, the following calls can be made:
 
-link_load_raw			;loads file# given by A as raw file
+link_load_raw			;loads file# given by A as raw file, $ef loads next file, $fx loads/requests disk side and returns with an empty file when disk is changed
 link_load_comp			;loads file# given by A and decompress it on the fly while loading
 link_load_next_raw		;loads next file as raw file, no file# needed
 link_load_next_comp		;loads next file and decompress it on the fly while loading, no file# needed
@@ -161,7 +161,7 @@ link_load_next_raw_decomp	;loads next file and decompress it after loading, deco
 link_load_next_double		;loads one file wth on the fly decompression and a second one raw and decompresses it afterwards under i/o. In fact we can load a huge file under i/o this way, by simply splitting it up
 link_decomp			;decompress last file being loaded (or file the pointers point to, see macros)
 link_decomp_under_io		;decompress last file being loaded under i/o
-link_frame_count		;the frame-counter that is bumbed each frame
+link_frame_count		;the frame-counter that is bumped each frame
 link_player			;a base irq within the resident part that can be used while loading, so no previous handler is overwritten, and music continues playing.
 link_music_addr			;address of the music call that can be changed if a new song is loaded and located at a different location.
 link_music_play			;the music play routine that should be called once per frame, to keep music playing and frame-counter counting.
@@ -196,10 +196,10 @@ reset_drive			;resets the drive, so the laoder can be reuploaded later again and
 request_disk .num		;command the floppy to check for given side#, will return as soon as the new diskside is detected
 setup_sync .frames		;setup frame counter to wait for $0000-$7fff frames
 sync				;wait for sync to happen or expire
-bus_lock			;lock the bus, after hat arbitrary writes to $dd00 are possible, for e.g. with a comüplex FPP, no loading or interaction with the drive is possible in that time
+bus_lock			;lock the bus, after hat arbitrary writes to $dd00 are possible, for e.g. with a complex FPP, no loading or interaction with the drive is possible in that time
 bus_unlock .bank		;unlock the bus again and and reenable the drive, an actual bank needs to be given, as $dd00 is set up again
 set_depack_pointers .addr	;change the decompression target-address of a loaded file, so it can be loaded and decompressed to a different location than given during compression
-start_music_nmi			;start an NMI that will call the music-player once per frame
+start_music_nmi			;start an NMI that will call the music-player once per frame via timer on rasterline $ff
 stop_music_nmi			;stop the NMI (for e.g. to hand over to a raster-irq)
 restart_music_nmi		;restart the NMI again, cheaper way when the timers are still set up
 
@@ -358,10 +358,10 @@ Technical Limitations
 
 1. Drive Speed / Wobble
 
-It might be a good idea to hav a look at the rpm*.prgs at this URL:
+It might be a good idea to have a look at the rpm*.prgs at this URL:
 https://sourceforge.net/p/vice-emu/code/HEAD/tree/testprogs/drive/rpm/
 
-Please check your drive so that it is running at 300 rpm. In fact the loader can cope with floppys that are off that range by a few rounds, still it will have retries and possible read errors and hickups. Belt driven drives (which can be found in 1541, 1541C and 1541-ii) show a so called wobble, so the drive's rotation speed is drifting between a minimum and maximum in a sinus like manner. There's also 1541-ii drives out there (jpn, sankyo) that come along with a direct driven spindle. The plot-programs show a quite straight line then. On other drives, one can see howstrong the amplitude of the wobble is. I have drives that left the green area by quite a bit, and have drives with alps-mechanics, that jitter more or less randomly. They throw the most read errors in my tests. Things were better, when the disks were written with a drive, that has a direct drive. If the disks are written with the same floppy, on can assure, that the track alignment is the same, but when written with a strong wobble and read back with the same strong wobble, amplitudes can add up to twice the wobble, reading speed can increase and decrease fast and that can trip the gcr-read-loop of the loader. There are many sanity checks implemented, as the eor-checksum of a sector is a bit weak, it can happen that the chcksum is still okay, but the content of a sector is wrong. So the last trailing bytes after the checksum are also checked for being zero. Also the header is double checked, if track, sector and disk-id are correct besides the checksum. A lot of tests on all kind of hardware showed, that there's the possibility of a file being loaded with a corrupt content in very seldom cases due to this physical restrictions. The gcr-loop used in the rom takes only 19 cycles for a byte to read from disk, that might allow for more tolerance regarding that matter.
+Please check your drive so that it is running at 300 rpm. In fact the loader can cope with floppys that are off that range by a few rounds, still it will have retries and possible read errors and hickups. Belt driven drives (which can be found in 1541, 1541C and 1541-ii) show a so called wobble, so the drive's rotation speed is drifting between a minimum and maximum in a sinus like manner. There's also 1541-ii drives out there (jpn, sankyo) that come along with a direct driven spindle. The plot-programs show a quite straight line then. On other drives, one can see how strong the amplitude of the wobble is. I have drives that left the green area by quite a bit, and have drives with alps-mechanics, that jitter more or less randomly. They throw the most read errors in my tests. Things were better, when the disks were written with a drive, that has a direct drive. If the disks are written with the same floppy, on can assure, that the track alignment is the same, but when written with a strong wobble and read back with the same strong wobble, amplitudes can add up to twice the wobble, reading speed can increase and decrease fast and that can trip the gcr-read-loop of the loader. There are many sanity checks implemented, as the eor-checksum of a sector is a bit weak, it can happen that the chcksum is still okay, but the content of a sector is wrong. So the last trailing bytes after the checksum are also checked for being zero. Also the header is double checked, if track, sector and disk-id are correct besides the checksum. A lot of tests on all kind of hardware showed, that there's the possibility of a file being loaded with a corrupt content in very seldom cases due to this physical restrictions. The gcr-loop used in the rom takes only 19 cycles for a byte to read from disk, that might allow for more tolerance regarding that matter.
 
 2. Electromagnetic Fields
 
