@@ -23,10 +23,12 @@ CONFIG_LOADER			= 1		;Include the loader or maybe decide for a standalone depack
 
 CONFIG_AUTODETECT		= 1		;Autodetect CIA + SID and store the results in the resident part for later use, so upcoming parts do not need an own detection anymore but can read out that values again
 
-CONFIG_NMI_GAPS			= 1		;If you have Ninjy-style NMI-handlers @ $0200 and $0300 to install while still using the loader, choose that option and 10 bytes will be reserved at each location for your code to stay.
+CONFIG_NMI_GAPS			= 0		;If you have Ninjy-style NMI-handlers @ $0200 and $0300 to install while still using the loader, choose that option and 10 bytes will be reserved at each location for your code to stay.
+
+CONFIG_NEXT_DOUBLE		= 0		;If enabled the old load_next_double code stays in resident area (Hi Bob/Censor!)
 
 ;options for drivecode
-CONFIG_MOTOR_ALWAYS_ON		= 0		;If you want to be annoying, let the motor spin during the whole demo :-D
+CONFIG_MOTOR_ALWAYS_ON		= 1		;If you want to be annoying, let the motor spin during the whole demo :-D
 
 CONFIG_DEBUG			= 0		;transfer retry-counts to c64 for benchmarking
 

@@ -32,9 +32,13 @@
 LZ_BITS_LEFT		= 1				;shift lz_bits left or right, might make a difference on testing and init, left is the original way
 
 ;if you do not make use of the nmi-gaps, these optimizations will be enabled, with gaps, they don't fit :-(
-OPT_FULL_SET		= CONFIG_NMI_GAPS xor 1		;adds 1,4% more performance, needs 10 bytes extra
+OPT_FULL_SET		= (CONFIG_NMI_GAPS | CONFIG_NEXT_DOUBLE) xor 1		;adds 1,4% more performance, needs 10 bytes extra
 OPT_PRIO_LEN2		= CONFIG_NMI_GAPS xor 1		;adds 0,1% more performance, needs 4 bytes extra
-OPT_LZ_INC_SRC		= 1				;give non equal case priority on lz_src checks
+OPT_LZ_INC_SRC1		= 1				;give non equal case priority on lz_src checks
+OPT_LZ_INC_SRC2		= 1				;give non equal case priority on lz_src checks
+OPT_LZ_INC_SRC3		= 1				;give non equal case priority on lz_src checks
+OPT_LZ_DST_INC		= CONFIG_NMI_GAPS xor 1
+OPT_LZ_CLC		= CONFIG_NMI_GAPS xor 1
 
 !if CONFIG_DECOMP = 0 {
 bitfire_load_addr_lo	= CONFIG_ZP_ADDR + 0		;in case of no loadcompd, store the hi- and lobyte of loadaddress separatedly
@@ -110,24 +114,27 @@ link_cia2_type		;%00000100
 			nop
 }
 
-			;those calls could be a macro, but they are handy to be jumped to so loading happens while having all mem free, and code is entered afterwards
-;	!if CONFIG_DECOMP = 1 {
-;;			;expect $01 to be $35
-;		!if CONFIG_LOADER = 1 {
-;
-;			;XXX TODO not used much, throw out
-;link_load_next_double
-;			;loads a splitted file, first part up to $d000 second part under IO
-;			jsr link_load_next_comp
-;link_load_next_raw_decomp
-;			jsr link_load_next_raw
-;		}
-;link_decomp_under_io
-;			dec $01				;bank out IO
-;			jsr link_decomp			;depack
-;			inc $01				;bank in again
-;			rts
-;	}
+!if CONFIG_NEXT_DOUBLE = 1 {
+			!warn "disabling some optimizations to make load_next_double fit"
+                        ;those calls could be a macro, but they are handy to be jumped to so loading happens while having all mem free, and code is entered afterwards
+        !if CONFIG_DECOMP = 1 {
+;                       ;expect $01 to be $35
+                !if CONFIG_LOADER = 1 {
+
+                        ;XXX TODO not used much, throw out
+link_load_next_double
+                        ;loads a splitted file, first part up to $d000 second part under IO
+                        jsr link_load_next_comp
+link_load_next_raw_decomp
+                        jsr link_load_next_raw
+                }
+link_decomp_under_io
+                        dec $01                         ;bank out IO
+                        jsr link_decomp                 ;depack
+                        inc $01                         ;bank in again
+                        rts
+        }
+}
 
 ;---------------------------------------------------------------------------------
 ;LOADER STUFF
@@ -144,6 +151,7 @@ bitfire_send_byte_
 			eor #$20
 			jsr .ld_set_dd02		;waste lots of cycles upon write, so bits do not arrive too fast @floppy
 			lsr <filenum
+			nop
 			bne .ld_loop
 			;clc				;force final value to be $3f again (bcc will hit in later on)
 .ld_set_dd02						;moved loop code to here, so that enough cycles pass by until $dd02 is set back to $3f after whole byte is transferred, also saves a byte \o/
@@ -247,7 +255,7 @@ bitfire_ntsc4		bpl .ld_gloop			;BRA, a is anything between 0e and 3e
 			+set_lz_bit_marker
 			sta <lz_bits
 			inc <lz_src + 0 		;postponed pointer increment, so no need to save A on next_page call
-!if OPT_LZ_INC_SRC = 1 {
+!if OPT_LZ_INC_SRC1 = 1 {
 			beq .lz_inc_src_refill
 .lz_inc_src_refill_
 } else {
@@ -348,13 +356,17 @@ bitfire_loadcomp_
 			;------------------
 			;SELDOM STUFF
 			;------------------
-!if OPT_LZ_INC_SRC = 1 {
+!if OPT_LZ_INC_SRC1 = 1 {
 .lz_inc_src_refill
 			+inc_src_ptr
 			bne .lz_inc_src_refill_
+}
+!if OPT_LZ_INC_SRC2 = 1 {
 .lz_inc_src_match
 			+inc_src_ptr
 			bne .lz_inc_src_match_
+}
+!if OPT_LZ_INC_SRC3 = 1 {
 .lz_inc_src_lit
 			+inc_src_ptr
 			bcs .lz_inc_src_lit_
@@ -404,7 +416,7 @@ bitfire_loadcomp_
 			sta .lz_offset_lo + 1		;lobyte of offset
 
 			inc <lz_src + 0			;postponed, so no need to save A on next_page call
-!if OPT_LZ_INC_SRC = 1 {
+!if OPT_LZ_INC_SRC2 = 1 {
 			beq .lz_inc_src_match
 .lz_inc_src_match_
 } else {
@@ -435,12 +447,16 @@ bitfire_loadcomp_
 			;------------------
 			;SELDOM STUFF
 			;------------------
+!if OPT_LZ_DST_INC = 1 {
 .lz_dst_inc
 			inc <lz_dst + 1
 			bcs .lz_dst_inc_
+}
+!if OPT_LZ_CLC = 1 {
 .lz_clc
 			clc
 			bcc .lz_clc_back
+}
 .lz_cp_page						;if we enter from a literal, we take care that x = 0 (given after loop run, after length fetch, we force it to zero by tax here), so that we can distinguish the code path later on. If we enter from a match x = $b0 (elias fetch) or >lz_dst_hi + 1, so never zero.
 			txa
 .lz_cp_page_						;a is already 0 if entered here
@@ -499,7 +515,7 @@ bitfire_loadcomp_
 			sta (lz_dst),y
 
 			inc <lz_src + 0
-!if OPT_LZ_INC_SRC = 1 {
+!if OPT_LZ_INC_SRC3 = 1 {
 			beq .lz_inc_src_lit
 .lz_inc_src_lit_
 } else {
@@ -508,13 +524,18 @@ bitfire_loadcomp_
 +
 }
 			inc <lz_dst + 0
+!if OPT_LZ_DST_INC = 1 {
 			beq .lz_dst_inc
+} else {
+			bne .lz_dst_inc_
+			inc <lz_dst + 1
+}
 .lz_dst_inc_
 			dex
 			bne .lz_cp_lit
 .lz_set1
 		!if OPT_FULL_SET = 0 {			;if optimization is enabled, the lda #$01 is modified to a bcs .lz_cp_page/lda #$01
-			bcc .lz_cp_page			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
+-			bcc .lz_cp_page			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
                 }
 			;------------------
 			;NEW OR OLD OFFSET
@@ -550,9 +571,16 @@ bitfire_loadcomp_
 .lz_match_len2
 			adc <lz_dst + 0			;add length
 			sta <lz_dst + 0
+!if OPT_LZ_CLC = 1 {
 			bcs .lz_clc			;/!\ branch happens very seldom, if so, clear carry, XXX TODO if we would branch to * + 3 and we use $18 as lz_dst, we have our clc there :-( but we want zp usage to be configureable
 			dec <lz_dst + 1			;subtract one more in this case
 .lz_clc_back
+} else {
+			bcs +				;/!\ branch happens very seldom, if so, clear carry, XXX TODO if we would branch to * + 3 and we use $18 as lz_dst, we have our clc there :-( but we want zp usage to be configureable
+			dec <lz_dst + 1			;subtract one more in this case
++
+			clc
+}
 .lz_offset_lo		sbc #$00			;carry is cleared, subtract (offset + 1)
 			sta .lz_msrcr + 0
 			lax <lz_dst + 1
@@ -568,7 +596,7 @@ bitfire_loadcomp_
 			stx <lz_dst + 1			;cheaper to get lz_dst + 1 into x than lz_dst + 0 for upcoming compare
 .lz_set2
 		!if OPT_FULL_SET = 0 {
-			bcc .lz_cp_page			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
+			bcc .lz_set1			;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
                 } else {
 			lda #$01
 		}
@@ -580,11 +608,10 @@ bitfire_loadcomp_
 			cpx <lz_src + 0
 			bne .lz_start_over
 
-							;XXX TODO, save one byte above and the beq lz_next_page can be omitted and lz_next_page copied here again
-			;jmp .ld_load_raw		;but should be able to skip fetch, so does not work this way
-			;top				;if lz_src + 1 gets incremented, the barrier check hits in even later, so at least one block is loaded, if it was $ff, we at least load the last block @ $ffxx, it must be the last block being loaded anyway
-							;as last block is forced, we would always wait for last block to be loaded if we enter this loop, no matter how :-)
 	!if CONFIG_LOADER = 1 {
+			lda #$fe			;force the barrier check to always hit in (eof will end this loop)
+			sta <lz_src + 1
+
 			;------------------
 			;NEXT PAGE IN STREAM
 			;------------------
