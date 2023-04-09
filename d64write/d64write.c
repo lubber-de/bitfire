@@ -464,7 +464,7 @@ int d64_bitfire_set_side(d64* d64, int side) {
 
     d64_read_sector(d64, D64_DIR_TRACK, dirsect, dir);
     memset(dir, 0, 256);
-    dir[0xff] = (side - 1) | 0xf0;
+    dir[0x03] = (side - 1) | 0xf0;
     d64_set_bam_entry(d64, D64_DIR_TRACK, dirsect, BAM_USED);
     d64_write_sector(d64, D64_DIR_TRACK, dirsect, dir);
 
@@ -529,16 +529,16 @@ int d64_create_bitfire_direntry(d64* d64, int track, int sector, int loadaddr, i
         dir_pos = 0;
         while (dir_pos < 63) {
             //empty entries have track set to 0
-            if (dir[dir_pos * 4 + 0] + dir[dir_pos * 4 + 1] + dir[dir_pos * 4 + 2] + dir[dir_pos * 4 + 3] == 0) {
-                dir[dir_pos * 4 + 0] = loadaddr & 0xff;
-                dir[dir_pos * 4 + 1] = (loadaddr >> 8) & 0xff;
-                dir[dir_pos * 4 + 2] = (length - 1) & 0xff;
-                dir[dir_pos * 4 + 3] = ((length - 1) >> 8) & 0xff;
+            if (dir[4 + dir_pos * 4 + 0] + dir[4 + dir_pos * 4 + 1] + dir[4 + dir_pos * 4 + 2] + dir[4 + dir_pos * 4 + 3] == 0) {
+                dir[4 + dir_pos * 4 + 0] = loadaddr & 0xff;
+                dir[4 + dir_pos * 4 + 1] = ((loadaddr >> 8) & 0xff) - 1;
+                dir[4 + dir_pos * 4 + 2] = (length - 1) & 0xff;
+                dir[4 + dir_pos * 4 + 3] = ((length - 1) >> 8) & 0xff;
                 //first file in dir sector -> place init values
             	if (dir_pos == 0) {
-                    dir[0xfc] = track;
-                    dir[0xfd] = sectnum;
-                    dir[0xfe] = sectpos;
+                    dir[0x0] = track;
+                    dir[0x1] = sectnum;
+                    dir[0x2] = sectpos;
                     if (verbose) {
                         printf("init-values of dir-sector: track: $%02x, sector-count: $%02x, sector-pos: $%02x\n", track, sectnum, sectpos);
                     }
@@ -581,7 +581,11 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
     //for (i = 0; i < 32; i++) s_dbg[i] = 0;
 
     /* at which sector on track do we start? */
-    int sectnum = sectors[d64->track] - d64_get_free_track_blocks(d64, d64->track);
+    int sectnum = 0;
+    if (d64->track != 0) {
+        sectnum = sectors[d64->track] - d64_get_free_track_blocks(d64, d64->track);
+        //printf("sectnum: % 2d  track: % 2d  free: % 4d  sectors: % 02d\n", sectnum, d64->track, sectors[d64->track], d64_get_free_track_blocks(d64, d64->track));
+    }
 
     /* partly filled sectors do not count, subtract */
     if (d64->sectpos > 0) sectnum--;
@@ -713,8 +717,8 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
 
     /* blank buffer */
     memset(d64->sectbuf, 0, 256);
-//    /* write changed bam */
-//    d64_write_bam(d64);
+    /* write changed bam */
+    d64_write_bam(d64);
 
     d64->track_link = start_track;
     d64->sector_link = start_sector;
@@ -861,7 +865,7 @@ void d64_apply_dirart(d64* d64, char* art_path, int boot_track, int boot_sector,
 }
 
 int main(int argc, char *argv[]) {
-    d64 d64;
+    d64 d64 = { 0 };
     int side = -1;
 
     int c;
@@ -886,6 +890,8 @@ int main(int argc, char *argv[]) {
     int free = -1;
 
     int link_to_num = 0;
+
+    memset(&d64, 0 ,sizeof(d64));
 
     debug_level = 0;
     d64.supported_tracks = 35;

@@ -27,12 +27,13 @@
 !cpu 6510
 
 CHECKSUM = 1
+CHECKSUM_CLEAR = 0
 REQDISC = 1
 BUSLOCK = 0
 WAIT_SPIN_DOWN = 0
 
-TIME_RAW = 0
-TIME_LOADCOMP = 1
+TIME_RAW = 1
+TIME_LOADCOMP = 0
 TIME_RAW_DECOMP = 0
 TIME_DECOMP = 0
 
@@ -181,11 +182,10 @@ display
 		bpl -
 		rts
 reset
-		lda #$00
-		sta cnt
-		sta cnt+1
-		sta numb+1
-		tax
+		lxa #0
+		stx numb+1
+		stx cnt
+		stx cnt+1
 -
 		sta $1000,x
 		sta $1100,x
@@ -255,8 +255,9 @@ numb		lda #$00		;file number
 		+bus_lock		;raise ATN and lock bus, does it help to set bit 6 + 7 for output? Had problems on sx-64 with all the buslock and maybe drifting of raise/fall times
 
 		ldy #$00
+		lda irq,y
 -
-		sty $dd00
+		sta $dd00
 		pha
 		pla
 		pha
@@ -273,16 +274,33 @@ numb		lda #$00		;file number
 		pla
 		nop
 		bit $ea
-		iny
+		dey
 		bne -
+}
+		lda #$03
+		sta $dd00
+!if BUSLOCK == 1 {
+		+bus_unlock
+		;jmp next
+}
 
-		+bus_unlock 3
+!if WAIT_SPIN_DOWN == 1 {
+		ldy #$00
+-
+		bit $d011
+		bpl *-3
+		bit $d011
+		bmi *-3
+		dey
+		bne -
 }
 
 !if TIME_RAW == 1 {
 		jsr .start_timer
 		pla
 		pha
+		;clc
+		;adc #1
 		jsr bitfire_loadraw_
 }
 !if TIME_DECOMP = 1 or TIME_RAW_DECOMP = 1 {
@@ -291,6 +309,8 @@ numb		lda #$00		;file number
 }
 		pla
 		pha
+		;clc
+		;adc #1
 		jsr bitfire_loadraw_
 !if TIME_RAW_DECOMP = 0 {
 		jsr .start_timer
@@ -301,6 +321,8 @@ numb		lda #$00		;file number
 		jsr .start_timer
 		pla
 		pha
+		;clc
+		;adc #1
 		jsr bitfire_loadcomp_
 }
 		pla
@@ -310,11 +332,11 @@ numb		lda #$00		;file number
 		jsr .stop_timer
 
 !if CHECKSUM == 0 {
-		lda #$fd
-		sta $dc00
-		lda $dc01
-		cmp #$7f
-		bne +
+;		lda #$fd
+;		sta $dc00
+;		lda $dc01
+;		cmp #$7f
+;		bne +
 }
 		ldx numb + 1
 !if CONFIG_DEBUG == 1 {
@@ -324,7 +346,9 @@ numb		lda #$00		;file number
 		sta accum,x
 }
 
+!if CHECKSUM == 1 & TIME_STRICT != 1 {
 		jsr checksum
+}
 +
 !if CONFIG_DEBUG == 1 {
 		lda err
@@ -408,8 +432,9 @@ checksum
 		clc
 		adc loads,y
 		sta srch
+!if CHECKSUM_CLEAR == 1 {
 		sta srcd
-
+}
 		txa
 		eor #$ff
 		tax
@@ -421,19 +446,24 @@ checksum
 		lda loads + 1,y
 		sbc #$00
 		sta srch + 1
+!if CHECKSUM_CLEAR == 1 {
 		sta srcd + 1
-
+}
 		lda #$00
 -
 		clc
 srch = * + 1
 		adc $1000,x
+!if CHECKSUM_CLEAR == 1 {
 srcd = * + 1
 		sta $1000,x	;overwrite with junk
+}
 		inx
 		bne -
 		inc srch + 1
+!if CHECKSUM_CLEAR == 1 {
 		inc srcd + 1
+}
 		dec endh
 		bne -
 		ldx numb+1
@@ -745,30 +775,31 @@ hex_runs
 hex
 		!text "0123456789abcdef"
 
+
 sizes
 !if TIME_RAW == 1 {
-!word $c179-$b635
-!word $bf80-$6a61
-!word $bd00-$aa49
-!word $4900-$3eed
-!word $6600-$3ee5
-!word $4396-$3229
-!word $62d5-$5e47
-!word $2d00-$2b1f
-!word $4500-$36e9
-!word $6358-$54d3
-!word $6200-$3ab4
-!word $7300-$6954
-!word $67a1-$5822
-!word $bef7-$bb95
-!word $8000-$7950
-!word $af00-$a15a
-!word $666b-$3d1f
-!word $a800-$95d4
-!word $bf80-$6a61
-!word $bf80-$6a61
-!word $bf80-$6a61
-!word $6600-$3ee5
+!word $c179-$b635	;a	00000000
+!word $bf80-$6a62	;b	00000001
+!word $bd00-$aa49	;c	00000010
+!word $4900-$3eed	;d	00000011
+!word $6600-$3ee5	;e	00000100
+!word $4396-$3229	;f	00000101
+!word $62d5-$5e47	;g	00000110
+!word $2d00-$2b1f	;h	00000111
+!word $4500-$36e9	;i	00001000
+!word $6358-$54d3	;j	00001001
+!word $6200-$3ab4	;k	00001010
+!word $7300-$6954	;l	00001011
+!word $67a1-$5822	;m	00001100
+!word $bef7-$bb95	;n	00001101
+!word $8000-$7950	;o	00001110
+!word $af00-$a15a	;p	00001111
+!word $666b-$3d1f	;q	00010000
+!word $a800-$95d4	;r	00010001
+!word $bf80-$6a62	;s	00010010
+!word $bf80-$6a62	;t	00010011
+!word $bf80-$6a62	;u	00010100
+!word $6600-$3ee5	;v	00010101
 } else {
 !word $c179-$a000	;a
 !word $bf80-$2800	;b
@@ -797,27 +828,27 @@ sizes
 chksums
 !if TIME_RAW == 1 {
 !byte $2d
-!byte $26
-!byte $fc
-!byte $ff
-!byte $39
+!byte $67
+!byte $9f
+!byte $e2
+!byte $c3
 !byte $65
 !byte $45
 !byte $1e
 !byte $a3
-!byte $0d
+!byte $09
 !byte $e8
 !byte $b3
 !byte $91
 !byte $80
 !byte $c1
 !byte $d3
-!byte $00
+!byte $31
 !byte $7a
-!byte $26
-!byte $26
-!byte $26
-!byte $39
+!byte $67
+!byte $67
+!byte $67
+!byte $c3
 } else {
 !byte $ea
 !byte $fd
@@ -846,7 +877,7 @@ chksums
 loads
 !if TIME_RAW == 1 {
 !word $b635
-!word $6a61
+!word $6a62
 !word $aa49
 !word $3eed
 !word $3ee5
@@ -863,9 +894,9 @@ loads
 !word $a15a
 !word $3d1f
 !word $95d4
-!word $6a61
-!word $6a61
-!word $6a61
+!word $6a62
+!word $6a62
+!word $6a62
 !word $3ee5
 } else {
 !word $a000

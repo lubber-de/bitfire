@@ -100,23 +100,16 @@
 		}
 
 		!macro bus_lock {
-			lda #$37			;set ATN and CLK
+			lda #$37			;set ATN
 			sta $dd02
 		}
 
-		!macro bus_unlock .arg {
-			ldx #(.arg & 3) + $c0
-			stx $dd00
-
-			lda #$3f			;release CLK
+		!macro bus_unlock {
+			lda $dd00
+			and #$03
+			sta $dd00
+			lda #$3f
 			sta $dd02
-
-			pha
-			pla
-			pha
-			pla
-			pha
-			pla
 		}
 
 		!macro set_depack_pointers .arg {
@@ -173,25 +166,25 @@
 			sta $dd0d
 		}
 
-		!macro gaps_setup {
-			ldx #$09
-.l
-			lda CONFIG_RESIDENT_ADDR + $000,x
-			pha
-			lda CONFIG_RESIDENT_ADDR + $100,x
-			pha
-			dex
-			bpl .l
-		}
-
-		!macro gaps_restore {
-			ldx #$00
-.l
-			pla
-			sta CONFIG_RESIDENT_ADDR + $000,x
-			pla
-			sta CONFIG_RESIDENT_ADDR + $100,x
-			inx
-			cpx #$0a
-			bne .l
-		}
+;		!macro gaps_setup {
+;			ldx #$09
+;.l
+;			lda CONFIG_RESIDENT_ADDR + $000,x
+;			pha
+;			lda CONFIG_RESIDENT_ADDR + $100,x
+;			pha
+;			dex
+;			bpl .l
+;		}
+;
+;		!macro gaps_restore {
+;			ldx #$00
+;.l
+;			pla
+;			sta CONFIG_RESIDENT_ADDR + $000,x
+;			pla
+;			sta CONFIG_RESIDENT_ADDR + $100,x
+;			inx
+;			cpx #$0a
+;			bne .l
+;		}

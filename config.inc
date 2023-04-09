@@ -1,7 +1,7 @@
 !ifndef CONFIG_LOADED {
 
 ;options for resident part
-CONFIG_RESIDENT_ADDR		= $0200
+CONFIG_RESIDENT_ADDR		= $f000
 CONFIG_ZP_ADDR			= $02		;maximum 11 bytes needed, 5 for loader, 6 for depacker
 CONFIG_LAX_ADDR			= $00		;Usually save to have the value $37 here, but can be also set elsewhere, but must stay persistent during loading
 
@@ -28,7 +28,7 @@ CONFIG_NMI_GAPS			= 0		;If you have Ninjy-style NMI-handlers @ $0200 and $0300 t
 CONFIG_NEXT_DOUBLE		= 0		;If enabled the old load_next_double code stays in resident area (Hi Bob/Censor!)
 
 ;options for drivecode
-CONFIG_MOTOR_ALWAYS_ON		= 1		;If you want to be annoying, let the motor spin during the whole demo :-D
+CONFIG_MOTOR_ALWAYS_ON		= 0		;If you want to be annoying, let the motor spin during the whole demo :-D
 
 CONFIG_DEBUG			= 0		;transfer retry-counts to c64 for benchmarking
 
