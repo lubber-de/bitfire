@@ -33,7 +33,7 @@ LZ_BITS_LEFT		= 1							;shift lz_bits left or right, might make a difference on
 
 ;if you do not make use of the nmi-gaps, these optimizations will be enabled, with gaps, they don't fit :-(
 OPT_FULL_SET		= (CONFIG_NMI_GAPS | CONFIG_NEXT_DOUBLE) xor 1		;adds 1,4% more performance, needs 10 bytes extra
-OPT_PRIO_LEN2		= CONFIG_NMI_GAPS xor 1					;adds 0,1% more performance, needs 4 bytes extra
+OPT_PRIO_LEN2		= (CONFIG_NMI_GAPS | CONFIG_NEXT_DOUBLE) xor 1		;adds 0,1% more performance, needs 4 bytes extra
 OPT_LZ_INC_SRC1		= 1							;give non equal case priority on lz_src checks
 OPT_LZ_INC_SRC2		= 1							;give non equal case priority on lz_src checks
 OPT_LZ_INC_SRC3		= 1							;give non equal case priority on lz_src checks
@@ -165,77 +165,73 @@ bitfire_loadraw_
 -
 .ld_load_raw
 			jsr .ld_pblock						;fetch all blocks until eof
-			bcc -
+			bpl -
 			;rts							;just run into ld_pblock code again that will then branch to rts upon block poll
 .ld_pblock
 			lda $dd00						;bit 6 is always set if not ready or idle/EOF
-			anc #$c0						;focus on bit 7 and 6 and copy bit 7 to carry (set if floppy is idle/eof is reached)
+			and #$c0						;focus on bit 7 and 6 and copy bit 7 to carry (set if floppy is idle/eof is reached)
 			bne .ld_en_exit + 1					;block ready? if so, a = 0 (block ready + busy) if not -> rts
-.ld_pblock_
+
+			sec							;loadraw enters ld_pblock with C = 0
 			ldy #$05						;fetch 5 bytes of preamble
 			;lda #$00						;is already zero due to anc #$c0, that is why we favour anc #$co over asl, as we save a byte
 			ldx #<preamble						;target for received bytes
 			jsr .ld_set_block_tgt					;load 5 bytes preamble - returns with C = 0 at times
 
-			ldy <block_length					;load blocklength
 			ldx <block_addr_lo					;block_address lo
 			lda <block_addr_hi					;block_address hi
-			bit <block_status					;status -> first_block?
-			bmi .ld_set_block_tgt
+			ldy <block_status					;status -> first_block?
+			bmi +
 			stx bitfire_load_addr_lo				;yes, store load_address (also lz_src in case depacker is present)
 			sta bitfire_load_addr_hi
++
+										;XXX TODO, should be a4 (ldy preamble) for normal run and a2 (ldx #imm) for preamblerun, hm
+			ldy <block_length					;load blocklength
 .ld_set_block_tgt
 			stx .ld_store + 1					;setup target for block data
 			sta .ld_store + 2
 										;XXX TODO, change busy signal 1 = ready, 0 = eof, leave ld_pblock with carry set, also tay can be done after preamble load as last value is still in a
-			sec							;loadraw enters ld_pblock with C = 0
-										;lax would be a7, would need to swap carry in that case: eof == clc, block read = sec
-			ldx #$8e						;opcode for stx	-> repair any rts being set (also accidently) by y-index-check
-			top
-.ld_en_exit
-			ldx #$60
-			stx .ld_gend						;XXX TODO would be nice if we could do that with ld_store in same time, but happens at different timeslots :-(
-			bpl +							;do bpl first
-bitfire_ntsc5
-			bcs .ld_gentry						;also bmi is now in right place to be included in ntsc case to slow down by another 2 cycles. bpl .ld_gloop will then point here and bmi will just fall through always
+			ldx #$6d						;opcode for adc	-> repair any rts being set (also accidently) by y-index-check
+.ld_set
+			stx .ld_gend
+			bcs .ld_gentry
 .ld_gloop
-			lsr							;%xxx1110x
-			lsr							;%xxxx1110
-			ldx #$3f
-bitfire_ntsc0		ora $dd00 - $3f,x
+			lsr							;%0dddd111
+			lsr							;%00dddd11 1
+			ldx <CONFIG_LAX_ADDR					;waste one cycle
+bitfire_ntsc0		ora $dd00						;%dddddd11 1, ora again to preserve
 			stx $dd02
-			dey
-			beq .ld_en_exit						;XXX TODO bail out here and do two bogus flip bits? would need clc + rts then? but set up of rts/adc can be omitted then! also, store forward?
-+
-			lsr							;%xxxxx111
-			lsr							;%xxxxxx11 1
-			ldx #$37
-bitfire_ntsc1		ora $dd00						;XXX TODO could use eor $dd00 if we toggle a bit in data?
-			stx $dd02
-			ror							;c = 1
-			ror							;c = 1 a = %11xxxxxx
+
+			ror							;%1dddddd1 1
+			ror							;%11dddddd 1
 			ldx #$3f
 			sax .ld_nibble + 1
-bitfire_ntsc2		and $dd00						;11xxxxxx might loose some lower bits, but will be repaired later on ora
+bitfire_ntsc2		and $dd00						;%ddxxxxxx might loose some lower bits, but will be repaired later on ora
 			stx $dd02
 
-.ld_nibble		ora #$00						;merge in lower bits again
+.ld_nibble		ora #$00						;%dddddddd -> merge in lower bits again and heal bits being dropped by previous and
 .ld_store		sta $b00b,y
-.ld_gentry
-			lax <CONFIG_LAX_ADDR
-bitfire_ntsc3		adc $dd00
-										;%xx1110xx
+.ld_gentry		lax <CONFIG_LAX_ADDR
 .ld_gend
+bitfire_ntsc3		adc $dd00						;%dd1110xx will be like #$38 (A = $37 + carry) be added
 			stx $dd02						;carry is cleared now after last adc, we can exit here with carry cleared (else set if EOF) and do our rts with .ld_gend
-bitfire_ntsc4		bcc .ld_gloop						;BRA, a is anything between 0e and 3e
 
-!if >* != >.ld_gloop { !error "getloop code crosses page!" }			;XXX TODO in fact the branch can also take 4 cycles if needed, ora $dd00 - $3f,x wastes one cycle anyway
+			lsr							;%0dd111xx
+			lsr							;%00dd111x
+			dey
+			cpy #$01						;check on 0 in carry, too bad we can't use that result with direct bail out, still some bits to transfer
+			ldx #$3f
+bitfire_ntsc1		ora $dd00						;%dddd111x, ora to preserve the 3 set bits
+			stx $dd02
+
+!if >* != >.ld_gloop { !error "getloop code crosses page!" }			;XXX TODO in fact the branch can also take 4 cycles if needed, ldx <CONFIG_LAX_ADDR wastes one cycle anyway
+			bcs .ld_gloop
+.ld_en_exit
+			ldx #$60
+			bne .ld_set						;set rts to end loop at right position
+
 }
 
-			;lda #$3f
-			;ora $dd00
-			;eor nibble
-			;%00111xxx						;$20 -> carry on adc $18 == 2 MSB for and $dd00
 ;---------------------------------------------------------------------------------
 ;DEPACKER STUFF
 ;---------------------------------------------------------------------------------
@@ -276,26 +272,24 @@ bitfire_ntsc4		bcc .ld_gloop						;BRA, a is anything between 0e and 3e
 			tya							;was lda #$01, but A = 0 + upcoming rol makes this also start with A = 1
 			jsr .lz_length_16_					;get up to 7 more bits
 			sta <lz_len_hi						;and save hibyte
-			ldx #$b0
-		!if OPT_FULL_SET = 1 {						;transform bcs .lz_cp_page to a lda #$01 and by that do not waste a single cycle on a page check if not needed
-			lda #.lz_cp_page - .lz_set1 - 2				;we are very lucky here, we can jump in two steps to bcs of set1 and then to lz_cp_page, so we can set up both bcs with the same value ($c0 that is) and reach or goal in two hops, while keeping the setup code small
-			;ldy #.lz_cp_page - .lz_set2 - 2
-			bne +							;annoying, no dop or top possible, need to skip too many bytes
+		!if OPT_FULL_SET = 1 {						;transform beq .lz_cp_page to a lda #$01 and by that do not waste a single cycle on a page check if not needed
+			ldx #$c0
+			;ldx #.lz_cp_page - .lz_set1 - 2			;we are very lucky here, we can jump in two steps to bcs of set1 and then to lz_cp_page, so we can set up both bcs with the same value ($c0 that is) and reach or goal in two hops, while keeping the setup code small
+			top							;leads to ora ($a9,x) lda #$f0 nop
 .lz_lenchk_dis
 .lz_eof
 			pha
-			ldx #$a9
-			lda #$01
-			;iny							;y and a = 1
-			;tya
+			ldx #$01
+			lda #$a9
+			beq *-($fe-$ea)						;aka !byte $f0, $ea
 +
-			stx .lz_set1
-			stx .lz_set2
-			sta .lz_set1 + 1
-			sta .lz_set2 + 1
-			;ldy #$00
+			sta .lz_set1
+			sta .lz_set2
 			pla
-		} else {							;only transform bcs .lz_cp_page to anything that is not executes, like a nop #imm
+			stx .lz_set1 + 1
+			stx .lz_set2 + 1
+		} else {							;only transform bcs .lz_cp_page to anything that is not executed, like a nop #imm
+			ldx #$b0
 			pla
 			top
 .lz_lenchk_dis
@@ -437,7 +431,7 @@ bitfire_loadcomp_
 			ldy #$00
 		}
 			jsr .lz_refill_bits					;fetch remaining bits
-			bcs .lz_match_big					;lobyte != 0? If zero, fall through
+			bcs .lz_match_big					;BRA
 
 			;------------------
 			;SELDOM STUFF
@@ -467,14 +461,15 @@ bitfire_loadcomp_
 			;------------------
 			;POLLING
 			;------------------
-.lz_poll
 	!if CONFIG_LOADER = 1 {
-			bit $dd00
-			bvs .lz_start_over
+.lz_ld_blk
 			jsr .ld_pblock						;yes, fetch another block, call is disabled for plain decomp
 		!if OPT_FULL_SET = 1 {
 			lda #$01						;restore initial length val
-                }
+		}
+.lz_poll
+			bit $dd00
+			bvc .lz_ld_blk
 	}
 			;------------------
 			;ENTRY POINT DEPACKER
@@ -482,7 +477,7 @@ bitfire_loadcomp_
 .lz_start_over
 		!if OPT_FULL_SET = 0 {
 			lda #$01						;restore initial length val
-                }
+		}
 			+get_lz_bit
 			bcs .lz_match						;after each match check for another match or literal?
 
@@ -498,7 +493,7 @@ bitfire_loadcomp_
 			+get_lz_bit						;fetch payload bit
 			bcc -
 +
-			bne +							;lz_bits ot empty, so was last bit to fetch for #len
+			bne +							;lz_bits is empty, so was last bit to fetch for #len
 .lz_start_depack
 			jsr .lz_refill_bits
 			beq .lz_cp_page_					;handle special case of length being $xx00
@@ -530,7 +525,7 @@ bitfire_loadcomp_
 			bne .lz_cp_lit
 .lz_set1
 		!if OPT_FULL_SET = 0 {						;if optimization is enabled, the lda #$01 is modified to a bcs .lz_cp_page/lda #$01
--			bcc .lz_cp_page						;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
+			bcc .lz_cp_page						;next page to copy, either enabled or disabled (bcc/nop #imm/bcs)
                 }
 			;------------------
 			;NEW OR OLD OFFSET
@@ -579,6 +574,7 @@ bitfire_loadcomp_
 .lz_offset_lo		sbc #$00						;carry is cleared, subtract (offset + 1)
 			sta .lz_msrcr + 0
 			lax <lz_dst + 1
+			inx
 .lz_offset_hi		sbc #$00
 			sta .lz_msrcr + 1
 .lz_cp_match									;XXX TODO if repeated offset: add literal size to .lz_msrcr and done?
@@ -587,7 +583,6 @@ bitfire_loadcomp_
 			sta (lz_dst),y
 			iny
 			bne .lz_cp_match
-			inx
 			stx <lz_dst + 1						;cheaper to get lz_dst + 1 into x than lz_dst + 0 for upcoming compare
 .lz_set2
 		!if OPT_FULL_SET = 0 {
@@ -604,7 +599,7 @@ bitfire_loadcomp_
 			bne .lz_start_over
 
 	!if CONFIG_LOADER = 1 {
-			lda #$fe						;force the barrier check to always hit in (eof will end this loop)
+			lda #$fe						;force the barrier check to always hit in (eof will end this loop), will give $ff after upcoming inc
 			sta <lz_src + 1
 
 			;------------------
@@ -619,7 +614,7 @@ lz_next_page
 			pha
 .lz_fetch_sector								;entry of loop
 			jsr .ld_pblock						;fetch another block
-			bcs .lz_fetch_eof					;eof? yes, finish, only needed if files reach up to $ffxx -> barrier will be 0 then and upcoming check will always hit in -> this would suck
+			bmi .lz_fetch_eof					;eof? yes, finish, only needed if files reach up to $ffxx -> barrier will be 0 then and upcoming check will always hit in -> this would suck
 										;XXX TODO send a high enough barrier on last block being sent
 			lda <lz_src + 1						;get current depack position
 			cmp <block_barrier					;next pending block/barrier reached? If barrier == 0 this test will always loop on first call or until first-block with load-address arrives, no matter what .bitfire_lz_sector_ptr has as value \o/
