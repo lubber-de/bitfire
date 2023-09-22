@@ -42,19 +42,20 @@ OPT_LZ_CLC		= CONFIG_NMI_GAPS xor 1
 
 bitfire_load_addr_lo	= CONFIG_ZP_ADDR + 0					;in case of no loadcompd, store the hi- and lobyte of loadaddress separatedly
 bitfire_load_addr_hi	= CONFIG_ZP_ADDR + 1
-preamble		= CONFIG_ZP_ADDR + 2					;5 bytes
-lz_bits			= CONFIG_ZP_ADDR + 2 + (CONFIG_LOADER * 5)		;1 byte	- ommits preamble in case and occupies space with those vars
-lz_dst			= CONFIG_ZP_ADDR + 3 + (CONFIG_LOADER * 5)		;2 bytes
-lz_len_hi		= CONFIG_ZP_ADDR + 5 + (CONFIG_LOADER * 5)		;1 byte
+lz_bits			= CONFIG_ZP_ADDR + 2					;1 byte	- ommits preamble in case and occupies space with those vars
+lz_dst			= CONFIG_ZP_ADDR + 3					;2 bytes
+lz_len_hi		= CONFIG_ZP_ADDR + 5					;1 byte
 lz_src			= bitfire_load_addr_lo
+preamble		= CONFIG_ZP_ADDR + 6					;5 bytes
 
 block_length		= preamble + 0
 block_addr_lo		= preamble + 1
 block_addr_hi		= preamble + 2
 block_barrier		= preamble + 3
 block_status		= preamble + 4
-filenum			= block_barrier
+block_offset		= preamble
 
+filenum			= block_barrier
 
 !if CONFIG_DECOMP = 1 {
 !macro get_lz_bit {
@@ -75,11 +76,11 @@ filenum			= block_barrier
 }
 
 !macro inc_src_ptr {
-	!if CONFIG_LOADER = 1 {
+	;!if CONFIG_LOADER = 1 {
 			jsr lz_next_page					;sets X = 0, so all sane
-	} else {
-			inc <lz_src + 1
-	}
+	;} else {
+	;		inc <lz_src + 1
+	;}
 }
 
 bitfire_install_	= CONFIG_INSTALLER_ADDR					;define that label here, as we only aggregate labels from this file into loader_*.inc
@@ -126,6 +127,52 @@ link_decomp_under_io
                         inc $01							;bank in again
                         rts
         }
+}
+
+!if CONFIG_CRT = 1 {
+.ld_pblock
+crt_load_file
+link_load_next_raw
+			jsr read_byte
+			sta lz_dst + 0
+			sta lz_src + 0
+			jsr read_byte
+			sta lz_dst + 1
+			sta lz_src + 1
+
+			jsr read_byte
+			sta .endpos_lo + 1
+			jsr read_byte
+			sta .endpos_hi + 1
+
+			lxa #0
+			tay
+-
+			jsr read_byte
+			sta (lz_dst),y
+			iny
+			beq .chk_inc
+.chk_done
+.endpos_lo 		cpy #$00
+			bne -
+.endpos_hi		cpx #$00
+			bne -
+			rts
+.chk_inc
+			inc lz_dst + 1
+			inx
+			bne .chk_done
+read_byte
+.off			lda $df00
+			inc .off + 1
+			bne +
+			bit $de00
++
+;XXX TODO remove to trap the turn disk positions
+;XXX TODO do macro for request_turn_disk + check_turn_disk and wait_turn_disk
+bitfire_send_byte_
+bitfire_loadraw_
+			rts
 }
 
 ;---------------------------------------------------------------------------------
@@ -176,7 +223,7 @@ bitfire_loadraw_
 			ldy #$05						;fetch 5 bytes of preamble
 			;lda #$00						;is already zero due to anc #$c0, that is why we favour anc #$co over asl, as we save a byte
 			ldx #<preamble						;target for received bytes
-			jsr .ld_set_block_tgt					;load 5 bytes preamble - returns with C = 0 at times
+			jsr .ld_set_block_tgt					;load 5 bytes preamble - returns with C = 1 always
 
 			ldx <block_addr_lo					;block_address lo
 			lda <block_addr_hi					;block_address hi
@@ -303,6 +350,11 @@ bitfire_ntsc1		ora $dd00						;%dddd111x, ora to preserve the 3 set bits
 			;------------------
 			;DECOMP INIT
 			;------------------
+
+	!if CONFIG_CRT = 1 {
+link_load_next_comp
+			jsr crt_load_file
+        }
 bitfire_decomp_
 link_decomp
 	!if CONFIG_LOADER = 1 {
@@ -461,7 +513,7 @@ bitfire_loadcomp_
 			;------------------
 			;POLLING
 			;------------------
-	!if CONFIG_LOADER = 1 {
+	;!if CONFIG_LOADER = 1 {
 .lz_ld_blk
 			jsr .ld_pblock						;yes, fetch another block, call is disabled for plain decomp
 		!if OPT_FULL_SET = 1 {
@@ -470,7 +522,7 @@ bitfire_loadcomp_
 .lz_poll
 			bit $dd00
 			bvc .lz_ld_blk
-	}
+	;}
 			;------------------
 			;ENTRY POINT DEPACKER
 			;------------------
@@ -598,7 +650,6 @@ bitfire_loadcomp_
 			cpx <lz_src + 0
 			bne .lz_start_over
 
-	!if CONFIG_LOADER = 1 {
 			lda #$fe						;force the barrier check to always hit in (eof will end this loop), will give $ff after upcoming inc
 			sta <lz_src + 1
 
@@ -607,6 +658,7 @@ bitfire_loadcomp_
 			;------------------
 lz_next_page
 			inc <lz_src + 1
+	!if CONFIG_LOADER = 1 {
 .lz_next_page_									;preserves carry and X, clears Y, all sane
 .lz_skip_fetch
 			php							;save carry
