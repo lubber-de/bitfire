@@ -48,7 +48,7 @@
 !if CONFIG_CRT = 0 {
 		sta <CONFIG_LAX_ADDR
 }
-!if (CONFIG_AUTODETECT = 0) {
+!if CONFIG_LOADER_ONLY = 1 {
 		sta $01
 		lda #$00
 		sta $d015
@@ -132,7 +132,7 @@
 		sta $dd02
 }
 
-!if (CONFIG_RESIDENT_AUTOINST != 0) {
+;!if (CONFIG_RESIDENT_AUTOINST != 0) {
 !if (bitfire_resident_size) < 256 {
 		;better force to 8 bit, label might be defined as 16 bit
 		ldx #<(bitfire_resident_size)
@@ -157,13 +157,14 @@
 		dex
 		bne -
 }
-}
+;}
 
-!if (CONFIG_AUTODETECT = 1) {
+!if CONFIG_LOADER_ONLY = 0 {
 		!src "detect.asm"
 }
+
 !if CONFIG_CRT = 0 {
-!if CONFIG_LOADER = 1 {
+;!if CONFIG_LOADER = 1 {
 .l1		lda $d012
 .l2		cmp $d012
 		beq .l2
@@ -193,7 +194,7 @@
 		sta bitfire_ntsc3 + 2
 
 .nontsc
-}
+;}
 		lda #$3f			;drop atn to signal end of transfer
 		sta $dd02
 
@@ -395,10 +396,10 @@
 }
 .atnhi_end
 }
-!if (CONFIG_RESIDENT_AUTOINST != 0) {
+;!if (CONFIG_RESIDENT_AUTOINST != 0) {
 .res_start
 !bin "resident",,2
-}
+;}
 
 !if CONFIG_CRT = 0 {
 !src "drivecode.asm"
