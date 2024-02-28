@@ -27,13 +27,13 @@
 !cpu 6510
 
 CHECKSUM = 1
-CHECKSUM_CLEAR = 0
-REQDISC = 1
+CHECKSUM_CLEAR = 1
+REQDISC = 0
 BUSLOCK = 0
-WAIT_SPIN_DOWN = 0
+WAIT_SPIN_DOWN = 1
 
-TIME_RAW = 0
-TIME_LOADCOMP = 1
+TIME_RAW = 1
+TIME_LOADCOMP = 0
 TIME_RAW_DECOMP = 0
 TIME_DECOMP = 0
 
@@ -50,6 +50,7 @@ prnt		= $1c
 prnt_		= $1e
 err		= $24
 endh		= $26
+endc		= $27
 
 accum		= $30
 
@@ -76,9 +77,10 @@ screen		= $2000
 		ldx #$00
 		stx err
 		stx err + 1
-;!if CONFIG_DEBUG == 1 {
-;		stx bitfire_errors
-;}
+!if CONFIG_DEBUG == 1 {
+		stx bitfire_error
+		stx bitfire_error_acc
+}
 -
 		lda #$20
 		sta screen + $0000,x
@@ -104,7 +106,9 @@ screen		= $2000
 
 		lda #$7f
 		sta $dc0d
+		sta $dd0d
 		lda $dc0d
+		lda $dd0d
 		lda #$01
 		sta $d019
 		sta $d01a
@@ -195,7 +199,7 @@ reset
 		rts
 
 nmi
-		inc $d020
+		inc $d021
 		rti
 
 text3
@@ -285,7 +289,7 @@ numb		lda #$00		;file number
 }
 
 !if WAIT_SPIN_DOWN == 1 {
-		ldy #$00
+		ldy #$1c
 -
 		bit $d011
 		bpl *-3
@@ -339,28 +343,28 @@ numb		lda #$00		;file number
 ;		bne +
 }
 		ldx numb + 1
-;!if CONFIG_DEBUG == 1 {
-;		lda accum,x
-;		clc
-;		adc bitfire_errors
-;		sta accum,x
-;}
+!if CONFIG_DEBUG == 1 {
+		lda accum,x
+		clc
+		adc bitfire_error_acc
+		sta accum,x
+}
 
 !if CHECKSUM == 1 & TIME_STRICT != 1 {
 		jsr checksum
 }
 +
-;!if CONFIG_DEBUG == 1 {
-;		lda err
-;		clc
-;		adc bitfire_errors
-;		sta err
-;		bcc +
-;		inc err + 1
-;+
-;		lda #$00
-;		sta bitfire_errors
-;}
+!if CONFIG_DEBUG == 1 {
+		lda err
+		clc
+		adc bitfire_error_acc
+		sta err
+		bcc +
+		inc err + 1
++
+		lda #$00
+		sta bitfire_error_acc
+}
 
 		inc numb+1
 		lda numb+1
@@ -385,6 +389,10 @@ numb		lda #$00		;file number
 		jmp next
 
 irq
+		pha
+		lda #$37
+		sta $00
+		sta $01
 		;pha
 		dec $d020
 		dec $d019
@@ -414,11 +422,12 @@ irq
 		inc cnt+1
 +
 		inc $d020
-		;pla
+		lda #$35
+		sta $01
+		pla
 		rti
 checksum
-		lda numb+1
-		tax
+		lax numb+1
 		asl
 		tay
 		lda #$07
@@ -426,8 +435,9 @@ checksum
 
 		lda sizes + 1,y
 		sta endh
-		inc endh
-
+!if CHECKSUM_CLEAR == 1 {
+		sta endc
+}
 		lax sizes,y
 		clc
 		adc loads,y
@@ -439,10 +449,14 @@ checksum
 		eor #$ff
 		tax
 		inx
-		bne +
-		dec endh
-		sec
+		beq +
+		inc endh
+!if CHECKSUM_CLEAR == 1 {
+		inc endc
+}
+		dop
 +
+		sec
 		lda loads + 1,y
 		sbc #$00
 		sta srch + 1
@@ -454,22 +468,35 @@ checksum
 		clc
 srch = * + 1
 		adc $1000,x
-!if CHECKSUM_CLEAR == 1 {
-srcd = * + 1
-		sta $1000,x	;overwrite with junk
-}
+;!if CHECKSUM_CLEAR == 1 {
+;srcd = * + 1
+;		sta $1000,x	;overwrite with junk
+;}
 		inx
 		bne -
 		inc srch + 1
-!if CHECKSUM_CLEAR == 1 {
-		inc srcd + 1
-}
+;!if CHECKSUM_CLEAR == 1 {
+;		inc srcd + 1
+;}
 		dec endh
 		bne -
+
 		ldx numb+1
 		cmp chksums,x
 		bne no
 
+!if CHECKSUM_CLEAR == 1 {
+		lda #$69
+-
+srcd = * + 1
+		sta $1000,x	;overwrite with junk
+		inx
+		bne -
+		inc srcd + 1
+		dec endc
+		bne -
+}
+		ldx numb+1
 		lda #$05
 		jmp setcol
 
@@ -540,18 +567,18 @@ rev
 		lda $0f03,x
 		jsr print_
 
-;!if CONFIG_DEBUG == 1 {
-;		iny
-;		iny
-;		lda bitfire_errors
-;		jsr print_
-;
-;		iny
-;		iny
-;		ldx numb + 1
-;		lda accum,x
-;		jsr print_
-;}
+!if CONFIG_DEBUG == 1 {
+		iny
+		iny
+		lda bitfire_error_acc
+		jsr print_
+
+		iny
+		iny
+		ldx numb + 1
+		lda accum,x
+		jsr print_
+}
 
 		lda prnt + 1
 		and #$03

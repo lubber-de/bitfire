@@ -88,22 +88,22 @@ const unsigned char results00101hi_orig[16] = {
 
 //values are eored with 0x10, as both partitions underly the eor #$7f and on both partitions bit 0 can be set in resulting value, so we need to compensate for that
 const unsigned char results11110hi_orig[16] = {
-	0x10,
-	0x10,
-	0x30,
-	0x30,
-	0x50,
-	0x50,
-	0x70,
-	0x70,
-	0x80,
+	0x00,
+	0x00,
+	0x20,
+	0x20,
+	0x40,
+	0x40,
+	0x60,
+	0x60,
 	0x90,
-	0xb0,
-	0xb0,
-	0xc0,
+	0x80,
+	0xa0,
+	0xa0,
 	0xd0,
-	0xf0,
-	0xf0
+	0xc0,
+	0xe0,
+	0xe0
 };
 
 const unsigned char results00001hi_orig[16] = {
@@ -162,6 +162,60 @@ const unsigned char results11111lo[16] = {
 	0xe,
 	0xf
 };
+
+void print_table(int* table, int from, int to) {
+	int i;
+	if ((from & 0xf) != 0) {
+		printf("\t\t\t!byte ");
+		for (i = from & 0xf0; i < from; i++) {
+			printf ("     ");
+		}
+	}
+	for (i = from; i <= to; i++) {
+		if ((i & 0xf) == 0) {
+			printf("\t\t\t!byte ");
+		}
+		if (table[i] >= 0) printf("$%02x", table[i]);
+		else printf ("___");
+		if ((i != to) && ((i & 0xf) != 0xf)) printf(", ");
+		if ((i & 0xf) == 0xf || i == to) printf("      ;%04x\n", (i) & 0xfff0);
+	}
+}
+
+void comb_table() {
+    int table[1024] = { -1 };
+    int quint1;
+    int quint2;
+    int gcr1;
+    int gcr2;
+    int mask = 0x1a;
+
+    int i;
+    int pos;
+    int byte;
+
+    for (i = 0; i < 1024; i++) {
+        table[i] = - 1;
+    }
+
+    for (quint1 = 0; quint1 < 32; quint1++) {
+        for (quint2 = 0; quint2 < 32; quint2++) {
+            for (gcr1 = 0; gcr1 < 16; gcr1++) {
+                if (quint1 == gcr[gcr1]) break;
+            }
+            for (gcr2 = 0; gcr2 < 16; gcr2++) {
+                if (quint2 == gcr[gcr2]) break;
+            }
+            if (gcr1 < 16 && gcr2 < 16) {
+                pos = (((quint1) << 5) + ((quint2 & mask) << 0));
+                byte = ((gcr1) << 4) | (gcr2 & mask);
+                if ((table[pos] != byte) && (table[pos] >= 0)) printf("fuck $%02x $%02x\n", table[pos], byte);
+                table[pos] = byte;
+            }
+        }
+    }
+    print_table(table, 0, 1023);
+}
 
 void create_table(const unsigned char* gcr, const unsigned char* res_hi, const unsigned char* res_lo, int* table, char* order, int eor, int mask) {
 	int i, j, c;
@@ -238,25 +292,6 @@ int merge_table(int* table1, int* table2, int offset, int silent, int merge_lo, 
 	return 0;
 }
 
-void print_table(int* table, int from, int to) {
-	int i;
-	if ((from & 0xf) != 0) {
-		printf("\t\t\t!byte ");
-		for (i = from & 0xf0; i < from; i++) {
-			printf ("     ");
-		}
-	}
-	for (i = from; i <= to; i++) {
-		if ((i & 0xf) == 0) {
-			printf("\t\t\t!byte ");
-		}
-		if (table[i] >= 0) printf("$%02x", table[i]);
-		else printf ("___");
-		if ((i != to) && ((i & 0xf) != 0xf)) printf(", ");
-		if ((i & 0xf) == 0xf || i == to) printf("\n");
-	}
-}
-
 int main () {
 	int tabAAAAA000[256];
 	int tab0bb00bbb[256];
@@ -275,6 +310,9 @@ int main () {
 	int col;
 
 	int i;
+
+        //comb_table();
+        //return 0;
 
 	for (i = 0; i < 256; i++) {
 		tabAAAAA000[i] = -1;
@@ -332,6 +370,15 @@ int main () {
 					printf("offset_1: $%02x\n", offset_1);
 					printf("offset_4: $%02x\n", offset_4);
 					printf("offset_8: $%02x\n", offset_8);
+	                                for (i = 0; i < 256; i++) table[i] = -1;
+                                	merge_table(table, tab000bbbbb, offset_8, 0, 0, 0);	//88888
+                                	//merge_table(table, tabAAA000AA, 0x00, 0, 0, 0);	//77777
+                                	merge_table(table, tab0bb00bbb, 0x00, 0, 0, 0); //22222
+                                	merge_table(table, tabbbbbb000, offset_4, 0, 0, 0);	//44444
+                                	merge_table(table, tabAAAAA000, offset_1, 0, 0, 0);	//11111
+                                	//for (i = 0; i < 256; i++) if (table[i] < 0) table[i] = i;
+                                	printf("combined\n");
+                                	print_table(table, 0, 255);
 				}
 			}
 		}

@@ -436,7 +436,7 @@ void d64_get_free(d64 *d64) {
  * allocates next free block on disk, starting from unsigned char track and unsigned char sector
  * on. The new allocated block will be flagged as used in the BAM */
 
-static int d64_allocate_next_block(d64* d64, unsigned char* track, unsigned char* sector, int interleave) {
+static int d64_allocate_next_block(d64* d64, unsigned char* track, unsigned char* sector, int interleave, int filetype) {
     int free;
     int revs = 0;
 //    int interleaves[] = {3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4};
@@ -472,6 +472,22 @@ static int d64_allocate_next_block(d64* d64, unsigned char* track, unsigned char
     debug_message("still '%d' free blocks on track %d\n", free, *track);
 
 //    interleave = interleaves[(*track) - 1];
+    if (filetype == FILETYPE_BITFIRE) {
+        switch (*track) {
+            case 1 ... 17:
+                interleave = 4;
+            break;
+            case 18 ... 24:
+                interleave = 3;
+            break;
+            case 25 ... 30:
+                interleave = 3;
+            break;
+            default:
+                interleave = 3;
+            break;
+        }
+    }
 
     /* now as we have a track with free sectors, walk through sector */
     *sector = revs;
@@ -647,7 +663,7 @@ static int d64_create_direntry(d64* d64, char* name, int start_track, int start_
         /* extend dir with new block */
         d64->track_link  = d64->track;
         d64->sector_link = d64->sector;
-        d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, DIR_INTERLEAVE);
+        d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, DIR_INTERLEAVE, filetype);
         /* update ts-link */
         d64->sectbuf[0] = d64->track_link;
         d64->sectbuf[1] = d64->sector_link;
@@ -833,7 +849,7 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
             d64->track_link  = 0;
             d64->sector_link = 0;
         }
-        d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave);
+        d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave, type);
         memset(d64->sectbuf, 0, 256);
     }
 
@@ -842,7 +858,7 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
             d64->track_link  = 0;
             d64->sector_link = 0;
             /* start with a new block as last is full or first block */
-            d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave);
+            d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave, type);
             memset(d64->sectbuf, 0, 256);
         } else {
             /* reuse last sector and start from there on */
@@ -885,7 +901,7 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
             /* allocate a new block, therefore set up ts-link */
             d64->track_link = d64->track;
             d64->sector_link = d64->sector;
-            d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave);
+            d64_allocate_next_block(d64, &d64->track_link, &d64->sector_link, interleave, type);
             /* count blocks up */
             size++;
 
@@ -1155,7 +1171,7 @@ int main(int argc, char *argv[]) {
         printf("-S, --side <num>			Determines which side this disk image will be when it comes about turning the disc.\n");
         printf("-B, --boot <file> [line]		Writes a standard file into the dirtrack. All PRG entries from dirart are linked to that file. Optionally it is linked to given line number only.\n");
         printf("-a, --art <num> <dirart.prg/.png>	A dirart can be provided, it extracts <num> lines of a petscii or .png screen plus a first line that is interpreted as header + id. Any header and id given through -h and -i will be ignored then.\n");
-        printf("-I, --interleave <num>			Write files with given interleave (change that value also in config.inc). Default: %d\n", interleave);
+        //printf("-I, --interleave <num>			Write files with given interleave (change that value also in config.inc). Default: %d\n", interleave);
         printf("-F, --40				Enable 40 track support.\n");
         printf("-f, --free <num>			Set blocks free to num.\n");
         printf("-v, --verbose				Verbose output.\n");
@@ -1185,15 +1201,15 @@ int main(int argc, char *argv[]) {
                 fatal_message("value for %s must be in the range from 0 to 9180\n", argv[c]);
             }
         }
-        else if(!strcmp(argv[c], "--interleave") || !strcmp(argv[c], "-I")) {
-            if (argc - c > 1) interleave = strtoul(argv[++c], NULL, 10);
-            else {
-                fatal_message("missing value for option '%s'\n", argv[c]);
-            }
-            if (interleave < 1 || interleave > 16) {
-                fatal_message("value for %s must be in the range from 1 to 16\n", argv[c]);
-            }
-        }
+        //else if(!strcmp(argv[c], "--interleave") || !strcmp(argv[c], "-I")) {
+        //    if (argc - c > 1) interleave = strtoul(argv[++c], NULL, 10);
+        //    else {
+        //        fatal_message("missing value for option '%s'\n", argv[c]);
+        //    }
+        //    if (interleave < 1 || interleave > 16) {
+        //        fatal_message("value for %s must be in the range from 1 to 16\n", argv[c]);
+        //    }
+        //}
         else if(!strcmp(argv[c], "--side") || !strcmp(argv[c], "-S")) {
             if (argc -c > 1) side = strtoul(argv[++c], NULL, 10);
             else {

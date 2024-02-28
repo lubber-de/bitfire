@@ -45,11 +45,15 @@ preamble		= CONFIG_ZP_ADDR + 6					;5 bytes
 preamble		= CONFIG_ZP_ADDR + 2					;4 bytes
 }
 
-block_length		= preamble + 0
-block_addr_lo		= preamble + 1
-block_addr_hi		= preamble + 2
-block_barrier		= preamble + 3
-block_status		= preamble + 4 - CONFIG_LOADER_ONLY
+block_length		= preamble + 0 + CONFIG_DEBUG
+block_addr_lo		= preamble + 1 + CONFIG_DEBUG
+block_addr_hi		= preamble + 2 + CONFIG_DEBUG
+block_barrier		= preamble + 3 + CONFIG_DEBUG
+block_status		= preamble + 4 - CONFIG_LOADER_ONLY + CONFIG_DEBUG
+!if CONFIG_DEBUG != 0 {
+bitfire_error		= preamble
+bitfire_error_acc	= preamble + 5 - CONFIG_LOADER_ONLY + CONFIG_DEBUG
+}
 
 filenum			= block_barrier
 
@@ -57,7 +61,7 @@ bitfire_install_	= CONFIG_INSTALLER_ADDR					;define that label here, as we only
 
 			* = CONFIG_RESIDENT_ADDR
 !if CONFIG_LOADER_ONLY = 0 {
-.lz_gap1
+;.lz_gap1
 			;------------------
 			;MUSIC PLAY HOOK AND FRAME COUNTER
 			;------------------
@@ -218,11 +222,18 @@ bitfire_loadraw_
 			bne .rts						;block ready? if so, a = 0 (block ready + busy) if not -> rts
 
 			sec							;loadraw enters ld_pblock with C = 0
-			ldy #$05 - CONFIG_LOADER_ONLY				;fetch 5 bytes of preamble
+			ldy #$05 - CONFIG_LOADER_ONLY + CONFIG_DEBUG		;fetch 5 bytes of preamble
 			;lda #$00						;is already zero due to anc #$c0, that is why we favour anc #$co over asl, as we save a byte
 			ldx #<preamble						;target for received bytes
 			jsr .ld_set_block_tgt					;load 5 bytes preamble - returns with C = 1 always
 
+!if CONFIG_DEBUG != 0 {
+			lda <bitfire_error_acc
+			clc
+			adc <bitfire_error
+			sta <bitfire_error_acc
+			sec
+}
 			ldx <block_addr_lo					;block_address lo
 			lda <block_addr_hi					;block_address hi
 			ldy <block_status					;status -> first_block?
@@ -230,13 +241,12 @@ bitfire_loadraw_
 			stx bitfire_load_addr_lo				;yes, store load_address (also lz_src in case depacker is present)
 			sta bitfire_load_addr_hi
 +
-										;XXX TODO, should be a4 (ldy preamble) for normal run and a2 (ldx #imm) for preamblerun, hm
 			ldy <block_length					;load blocklength
 .ld_set_block_tgt
 			stx .ld_store + 1					;setup target for block data
 			sta .ld_store + 2
 										;XXX TODO, change busy signal 1 = ready, 0 = eof, leave ld_pblock with carry set, also tay can be done after preamble load as last value is still in a
-			ldx #$6d						;opcode for adc	-> repair any rts being set (also accidently) by y-index-check
+bitfire_ntsc3_op	ldx #$6d						;opcode for adc	-> repair any rts being set (also accidently) by y-index-check
 .ld_set
 			stx .ld_gend
 			bcs .ld_gentry
@@ -397,14 +407,14 @@ bitfire_loadcomp_
 			;BASE IRQ/NMI
 			;------------------
 
-			!ifdef .lz_gap2 {
-				;!warn "disabling some optimizations to make gaps fit"
-				!warn .lz_gap2 - *, " bytes left until gap2 @", *
-				!if .lz_gap2 - .lz_gap1 > $0100 {
-					!warn "code on first page too big, second gap does not fit!"
-				}
-			}
-.lz_gap2
+;			!ifdef .lz_gap2 {
+;				;!warn "disabling some optimizations to make gaps fit"
+;				!warn .lz_gap2 - *, " bytes left until gap2 @", *
+;				!if .lz_gap2 - .lz_gap1 > $0100 {
+;					!warn "code on first page too big, second gap does not fit!", .lz_gap2 - .lz_gap1
+;				}
+;			}
+;.lz_gap2
 
 link_player
 			pha
