@@ -28,6 +28,7 @@
 
 CHECKSUM = 1
 CHECKSUM_CLEAR = 1
+CHECKSUM_CLEAR_FAST = 0
 REQDISC = 0
 BUSLOCK = 0
 WAIT_SPIN_DOWN = 1
@@ -110,8 +111,8 @@ screen		= $2000
 		lda $dc0d
 		lda $dd0d
 		lda #$01
-		sta $d019
 		sta $d01a
+		sta $d019
 		lda #$ff
 		sta $d012
 		lda $d011
@@ -280,10 +281,8 @@ numb		lda #$00		;file number
 		bit $ea
 		dey
 		bne -
-}
 		lda #$03
 		sta $dd00
-!if BUSLOCK == 1 {
 		+bus_unlock
 		;jmp next
 }
@@ -445,6 +444,9 @@ checksum
 !if CHECKSUM_CLEAR == 1 {
 		sta srcd
 }
+!if CHECKSUM_CLEAR_FAST == 1 {
+		sta srcd
+}
 		txa
 		eor #$ff
 		tax
@@ -462,22 +464,26 @@ checksum
 		sta srch + 1
 !if CHECKSUM_CLEAR == 1 {
 		sta srcd + 1
+		stx endx + 1
+}
+!if CHECKSUM_CLEAR_FAST == 1 {
+		sta srcd + 1
 }
 		lda #$00
 -
 		clc
 srch = * + 1
 		adc $1000,x
-;!if CHECKSUM_CLEAR == 1 {
-;srcd = * + 1
-;		sta $1000,x	;overwrite with junk
-;}
+!if CHECKSUM_CLEAR_FAST == 1 {
+srcd = * + 1
+		sta $1000,x	;overwrite with junk
+}
 		inx
 		bne -
 		inc srch + 1
-;!if CHECKSUM_CLEAR == 1 {
-;		inc srcd + 1
-;}
+!if CHECKSUM_CLEAR_FAST == 1 {
+		inc srcd + 1
+}
 		dec endh
 		bne -
 
@@ -486,6 +492,7 @@ srch = * + 1
 		bne no
 
 !if CHECKSUM_CLEAR == 1 {
+endx		ldx #$00
 		lda #$69
 -
 srcd = * + 1
