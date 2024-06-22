@@ -407,15 +407,17 @@ void write_reencoded_stream(ctx* ctx) {
         }
 
         if (ctx->inplace) {
+            /* as we chose inplace, the whole packed stream lengths defines the load address */
             ctx->cbm_packed_addr = ctx->cbm_range_to - ctx->packed_index - 2;
         } else {
             if (ctx->cbm_relocate_packed_addr >= 0) {
                 ctx->cbm_packed_addr = ctx->cbm_relocate_packed_addr;
             } else {
-                ctx->cbm_packed_addr = ctx->cbm_orig_addr;
+                //ctx->cbm_packed_addr = ctx->cbm_orig_addr;
+                /* also include the overlap into the optimal load address */
+                ctx->cbm_packed_addr = ctx->cbm_range_to - 2 - (ctx->unpacked_index - (ctx->unpacked_size - ctx->packed_size));
             }
         }
-
 
         if (ctx->cbm) {
             printf("original: $%04x-$%04x ($%04x) 100%%\n", (int)ctx->cbm_orig_addr, (int)ctx->cbm_orig_addr + (int)ctx->unpacked_size, (int)ctx->unpacked_size);
@@ -731,7 +733,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("dali v0.3.3 - a zx0-reencoder for bitfire by Tobias Bindhammer\n");
+    printf("dali v0.3.4 - a zx0-reencoder for bitfire by Tobias Bindhammer\n");
     printf("underlying zx0-packer salvador by Emmanuel Marty\n");
 
     if (argc == 1) {

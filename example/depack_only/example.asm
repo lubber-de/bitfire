@@ -1,11 +1,17 @@
 !cpu 6510
-		* = $0801
-                !byte $0b,$08
-		!word 1602
-		!byte $9e
-		!text "2061"
-		!byte $00,$00,$00
 
+
+!src "../../loader/loader_acme.inc"
+!src "../../macros/link_macros_acme.inc"
+
+		* = $1000
+!bin "../../loader/installer",,2
+		* = $0800
+		lda #$08
+		sta $b8
+		lda #$37
+		sta $01
+		jsr bitfire_install_
 		sei
 		lda #$35
 		sta $01
@@ -26,15 +32,12 @@
 
 		jsr .timer_start
 
-		lda data_start
-		sta <lz_dst + 0
-		lda data_start + 1
-		sta <lz_dst + 1
+		lda #<(data_start)
+		sta bitfire_load_addr_lo
+		lda #>(data_start)
+		sta bitfire_load_addr_hi
 
-		ldx #<(data_start + 2)
-		lda #>(data_start + 2)
-
-		jsr depack
+		jsr bitfire_decomp_
 
 		jsr .timer_stop
 
@@ -106,13 +109,7 @@
 .hextab
 		!scr "0123456789abcdef"
 
-!align 255,0
-depack_
-!src "dzx0_dali.asm"
-!warn "depacker size: ", * - depack_
-
 		; * = $6b00
 		* = $6a62
 data_start
 !bin "testfile.lz",,2
-		!warn *
