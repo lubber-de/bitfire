@@ -528,7 +528,7 @@ static int d64_display_bam(d64* d64) {
     return 1;
 }
 
-static int d64_update_direntry(d64* d64, char* name, int start_track, int start_sector, int detrack, int desector, int desectpos, int type, int blocks, int locked, int update_link_only) {
+static int d64_update_direntry(d64* d64, char* name, int start_track, int start_sector, int detrack, int desector, int desectpos, int type, int blocks, int locked) {
     int name_len = 0;
     name_len = strlen(name);
 
@@ -537,22 +537,21 @@ static int d64_update_direntry(d64* d64, char* name, int start_track, int start_
     /* now write direntry-content  to sectbuf */
     d64->sectbuf[desectpos + D64_DTRACK]  = start_track;
     d64->sectbuf[desectpos + D64_DSECTOR] = start_sector;
-    if (!update_link_only) {
-        d64->sectbuf[desectpos + D64_DTYPE]   = type;
-        d64->sectbuf[desectpos + D64_DTYPE] = d64->sectbuf[desectpos + D64_DTYPE] | 0x80;
-        if (locked) d64->sectbuf[desectpos + D64_DTYPE] = d64->sectbuf[desectpos + D64_DTYPE] | 0x40;
-        /* add filename */
-        if (name_len > 16) {
-            fatal_message("name '%s' too long\n", name);
-            return 0;
-        }
-        memcpy(&d64->sectbuf[desectpos + D64_DNAME], name, name_len);
-        /* pad filename */
-        memset(&d64->sectbuf[desectpos + D64_DNAME + name_len], 0xa0, MAX_C64_NAME - name_len);
-        /* add size information */
-        d64->sectbuf[desectpos + D64_DBLOCKS + 1] = blocks / 256;
-        d64->sectbuf[desectpos + D64_DBLOCKS + 0] = blocks & 0xff;
+
+    d64->sectbuf[desectpos + D64_DTYPE]   = type;
+    d64->sectbuf[desectpos + D64_DTYPE] = d64->sectbuf[desectpos + D64_DTYPE] | 0x80;
+    if (locked) d64->sectbuf[desectpos + D64_DTYPE] = d64->sectbuf[desectpos + D64_DTYPE] | 0x40;
+    /* add filename */
+    if (name_len > 16) {
+        fatal_message("name '%s' too long\n", name);
+        return 0;
     }
+    memcpy(&d64->sectbuf[desectpos + D64_DNAME], name, name_len);
+    /* pad filename */
+    memset(&d64->sectbuf[desectpos + D64_DNAME + name_len], 0xa0, MAX_C64_NAME - name_len);
+    /* add size information */
+    d64->sectbuf[desectpos + D64_DBLOCKS + 1] = blocks / 256;
+    d64->sectbuf[desectpos + D64_DBLOCKS + 0] = blocks & 0xff;
 
     /* update size info if it is the last dir-sector */
     if(d64->sectbuf[0] == 0) d64->sectbuf[1] = SECTOR_SIZE - 1;
@@ -620,10 +619,47 @@ static int d64_readdir(d64* d64, dirent64* d) {
     return 1;
 }
 
-static int d64_create_direntry(d64* d64, char* name, int start_track, int start_sector, int filetype, int blocks, int locked, int link_to_num, int dirart_raw) {
+static int d64_update_link(d64* d64, char* name, int start_track, int start_sector, int link_to_num) {
     dirent64 d;
     int status;
     int line = 1;
+
+    /* set startpos */
+    d64->track  = D64_DIR_TRACK;
+    d64->sector = D64_DIR_SECTOR;
+
+    /* force fetch of first sector of dir */
+    d64->sectsize = 0;
+
+    /* walk through dir to find reusable direntries, position for a found entry will be set appropriately */
+    while ((status = d64_readdir(d64, &d))) {
+        debug_message("dir-entry found at t/s='%d/%d' @$%02x\n", d.d_detrack, d.d_desector, d.d_desectpos);
+        if (line == link_to_num && link_to_num >= 0) break;
+        if (!d.d_type && !d.d_closed) {
+            fatal_message("can't link '%s' to line %d, dir entry does not exist (range is 1 .. %d)!\n", name, link_to_num, line);
+        }
+        line++;
+    }
+
+    if (link_to_num >= 0 && d.d_type != FILETYPE_PRG) {
+          fatal_message("linkng against a non PRG direntry, file won't load / disk won't boot!\n");
+    }
+
+    /* read in sector the direntry is on */
+    if(!d64_read_sector(d64, d.d_detrack, d.d_desector, d64->sectbuf)) return 0;
+    /* now write direntry-content  to sectbuf */
+    d64->sectbuf[d.d_desectpos + D64_DTRACK]  = start_track;
+    d64->sectbuf[d.d_desectpos + D64_DSECTOR] = start_sector;
+
+    /* write back to disc */
+    if(!d64_write_sector(d64, d.d_detrack, d.d_desector, d64->sectbuf)) return 0;
+    memset(d64->sectbuf, 0, 256);
+    return 0;
+}
+
+static int d64_create_direntry(d64* d64, char* name, int start_track, int start_sector, int filetype, int blocks, int locked, int dirart_raw) {
+    dirent64 d;
+    int status;
 
     unsigned char prev_track;
     unsigned char prev_sector;
@@ -638,17 +674,9 @@ static int d64_create_direntry(d64* d64, char* name, int start_track, int start_
     /* walk through dir to find reusable direntries, position for a found entry will be set appropriately */
     while ((status = d64_readdir(d64, &d))) {
         debug_message("dir-entry found at t/s='%d/%d' @$%02x\n", d.d_detrack, d.d_desector, d.d_desectpos);
-        if (line == link_to_num && link_to_num >= 0) break;
         if (!d.d_type && !d.d_closed) break;
-        line++;
     }
 
-    if (link_to_num >= 0 && line != link_to_num) {
-        fatal_message("can't link '%s' to line %d, dir entry does not exist (range is 1 .. %d)!\n", name, link_to_num, line);
-    }
-    if (link_to_num >= 0 && line == link_to_num && d.d_type != FILETYPE_PRG) {
-        fatal_message("standard file '%s' is linked against a non PRG direntry (line %d), file is not loadable this way!\n", name, link_to_num);
-    }
     /* nothing free? */
     if(status == 0) {
         debug_message("last block of dir reached, need to extend dir from t/s='%d/%d' on\n", d64->track, d64->sector);
@@ -672,7 +700,7 @@ static int d64_create_direntry(d64* d64, char* name, int start_track, int start_
     debug_message("free dir-entry found at t/s='%d/%d' @$%02x\n", d.d_detrack, d.d_desector, d.d_desectpos);
 
     /* ...and create it on disc */
-    d64_update_direntry(d64, name, start_track, start_sector, d.d_detrack, d.d_desector, d.d_desectpos, filetype, blocks, locked, link_to_num >= 0);
+    d64_update_direntry(d64, name, start_track, start_sector, d.d_detrack, d.d_desector, d.d_desectpos, filetype, blocks, locked);
     return 0;
 }
 
@@ -933,7 +961,11 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
             if (!dirart_raw){
                 ascii2petscii(pname);
             }
-            d64_create_direntry(d64, pname, d64->track_link, d64->sector_link, FILETYPE_PRG, size, 0, link_to_num, dirart_raw);
+            if (link_to_num < 0) {
+                d64_create_direntry(d64, pname, d64->track_link, d64->sector_link, FILETYPE_PRG, size, 0, dirart_raw);
+            } else {
+                d64_update_link(d64, pname, d64->track_link, d64->sector_link, link_to_num);
+            }
         }
     } else {
         if ((bitfire_filenum = d64_create_bitfire_direntry(d64, d64->track_link, d64->sector_link, loadaddr, length, startpos, sectnum, verbose)) < 0) {
@@ -1000,7 +1032,7 @@ void d64_apply_dirart(d64* d64, char* art_path, int boot_track, int boot_sector,
     char* extension;
     int type = TYPE_PRG;
     ctx ctx;
-    int line = 0;
+    int n;
 
     extension = strrchr(art_path, '.');
     if (extension != NULL && (!strcmp(extension, ".png") || !strcmp(extension, ".PNG"))) {
@@ -1023,7 +1055,8 @@ void d64_apply_dirart(d64* d64, char* art_path, int boot_track, int boot_sector,
     }
 
     head = 0;
-    while(get_line(&ctx, file, art, type, head) && lines) {
+    n = lines;
+    while(get_line(&ctx, file, art, type, head) && n) {
         if (head == 0) {
             //for (i = 0; i < 39; i++) art[i] = art[i] & 0x7f;
             memcpy(header, art + 3, 16);
@@ -1061,16 +1094,16 @@ void d64_apply_dirart(d64* d64, char* art_path, int boot_track, int boot_sector,
                     filetype = FILETYPE_DEL;
                 break;
             }
-            if (link_boot == line && filetype != FILETYPE_PRG) {
-                fatal_message("bootfile is linked against a non PRG direntry, disk won't boot!\n");
-            }
-            if (filetype == FILETYPE_PRG && (link_boot < 0 || link_boot == line)) d64_create_direntry(d64, filename, boot_track, boot_sector, filetype, blocks, locked, link_boot, dirart_raw);
-            else d64_create_direntry(d64, filename, 0, 0, filetype, blocks, locked, -1, dirart_raw);
-            lines--;
-            line++;
+            d64_create_direntry(d64, filename, boot_track, boot_sector, filetype, blocks, locked, dirart_raw);
+            n--;
         }
     }
     fclose(file);
+    for (n = 1; n < lines; n++) {
+        if (link_boot < 0 || link_boot == n) {
+            d64_update_link(d64, filename, boot_track, boot_sector, n);
+        }
+    }
     return;
 }
 
@@ -1242,6 +1275,8 @@ int main(int argc, char *argv[]) {
     }
     //parse out diskimage and open it now as we have possible params like header and id
     if (format) {
+        //default to side 1 if not set when formatting, else bitfire will fail miserably
+        if (side < 1) side = 1;
         if(d64.file = fopen(d64_path, "wb"), !d64.file) {
             fatal_message("unable to open '%s'\n", d64_path);
         }
@@ -1275,6 +1310,9 @@ int main(int argc, char *argv[]) {
 
     //write the boot file first to have position on disk
     if(boot_file) {
+        if (!dir_art && link_to_num >= 0) {
+            printf("ignoring linenumber for boot-file '%s', as no dir-art ist used.\n", boot_file);
+        }
         d64_write_file(&d64, boot_file, FILETYPE_BOOT, dir_art ^ 1, DIR_INTERLEAVE, verbose, -1, 0);
     }
 
@@ -1292,7 +1330,7 @@ int main(int argc, char *argv[]) {
       	        if (argv[c + 1][0] != '-' && !errno) c++;
                 else link_to_num = -1;
             }
-            if (!dir_art) {
+            if (!dir_art && link_to_num >= 0) {
                 printf("ignoring linenumber for standard-file '%s', as no dir-art ist used.\n", filename);
                 link_to_num = -1;
             }
