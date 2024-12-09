@@ -1307,20 +1307,27 @@ b			= $48
 .bootstrap_start
 !pseudopc .bootstrap {
 .bootstrap_run
-			;this bootstrap will upload code from $0000-$06ff, and the bootstrap @ $0700 will be overwritten when dir-sector is read later on
-			lda #.DIR_TRACK
-			sta $0c
+			;stepperfix by dummy loading from track 17 first?
+			ldy #.DIR_TRACK - 1
+			sty $0c
+			iny
 !if .DIR_SECT != .DIR_TRACK {
 			lda #.DIR_SECT
-}
 			sta $0d
+} else {
+			sty $0d
+}
 
-			;fetch first dir sect and by that position head at track 18 to have a relyable start point for stepping
 			ldx #$80
+.job_step
 			stx $03
-.poll_job		bit $03
-			bmi .poll_job
-			;ends up at $0600?
+-			bit $03
+			bmi -
+
+			;then load dir sector
+			inc $0c
+			cpy $0c		;.DIR_TRACK
+			bpl .job_step
 
 			;motor and LED is on after that
 
@@ -1348,7 +1355,7 @@ b			= $48
 
 			sax $1c08				;clear counters
 			sax $1c04
-			sax .dir_diskside
+			;sax .dir_diskside
 
 			dex					;disable all interrupts
 			stx $180e
@@ -1408,6 +1415,9 @@ b			= $48
 
 !ifdef .second_pass {
 	!warn "bootstrap size: ", .bootstrap_size
+}
+!if .filenum != $18 {
+	!error ".filenum is not at address $0018 - clc trick will fail."
 }
 
 .second_pass
