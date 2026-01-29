@@ -927,9 +927,9 @@ int d64_write_file(d64* d64, char* path, int type, int add_dir, int interleave, 
             _makepath(pnamebuf, NULL, NULL, filename, extension);
             pname=pnamebuf;
 #else
-            pname = basename(path);
+            pname = strdup(path);
+            pname = basename(pname);
 #endif
-
             if (!dirart_raw){
                 ascii2petscii(pname);
             }
