@@ -45,4 +45,4 @@ bootstrap.h: bootstrap.asm
 	$(VR)rm $(basename $@).lst $(basename $@)
 
 clean:
-	$(VR)-rm crtwrite bootstrap.h
+	$(VR)-rm -f crtwrite bootstrap.h

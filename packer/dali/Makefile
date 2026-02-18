@@ -94,7 +94,7 @@ sfx.h: sfx.asm
 	@rm $(basename $@)
 
 clean:
-	$(VR)-rm dali dali.exe sfx.h example.prg testfile.lz
+	$(VR)-rm -f dali dali.exe sfx.h example.prg testfile.lz
 #	$(VR)-rm $(SALVADOR_PATH)/*.o
 #	$(VR)-rm $(SALVADOR_LIB_PATH)/*.o
 	$(VR)-make -C salvador clean

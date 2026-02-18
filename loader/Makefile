@@ -51,4 +51,4 @@ installer: resident drivecode.asm installer.asm constants.inc ../config.inc dete
 bitfire: installer
 
 clean:
-	$(VR)-rm installer loader_acme.inc loader_c6510.inc loader_kickass.inc resident gcr_tables frag
+	$(VR)-rm -f installer loader_acme.inc loader_c6510.inc loader_kickass.inc resident gcr_tables frag

@@ -35,4 +35,4 @@ else
 endif
 
 clean:
-	$(VR)-rm d64write
+	$(VR)-rm -f d64write
