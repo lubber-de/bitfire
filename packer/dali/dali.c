@@ -11,17 +11,21 @@
 #define TRUE 1
 #define DALI_BITS_LEFT 1
 #define DALI_ELIAS_LE 1
-#define DALI_VARS_SIZE 20
+#define DALI_VARS_SIZE 26
 
 #define POS_DALI_SFX_SRC 	0
 #define POS_DALI_SRC 		2
 #define POS_DALI_DST 		4
 #define POS_DALI_SFX_ADDR 	6
 #define POS_DALI_DATA_END 	8
-#define POS_DALI_DST_END 	10
+#define POS_DALI_MAX_MEM 	10
 #define POS_DALI_DATA_SIZE_HI 	12
 #define POS_DALI_01 		14
 #define POS_DALI_CLI 		16
+#define POS_DALI_EFFECT		18
+#define POS_DALI_STUB_SIZE	20
+#define POS_DALI_INIT_SIZE	22
+#define POS_DALI_SFX_DATA	24
 
 #define SFX_C64			1
 #define SFX_PLUS4		2
@@ -70,8 +74,6 @@ typedef struct ctx {
     int sfx_cli;
     int sfx_small;
     int sfx_effect;
-    int sfx_size;
-    unsigned char *sfx_code;
     int lz_bits;
 
     int exit_on_warn;
@@ -324,24 +326,38 @@ void reencode_packed_stream(ctx* ctx) {
     }
 }
 
-unsigned int get_var(ctx* ctx, unsigned int pos) {
-    return ctx->sfx_code[pos] + (ctx->sfx_code[pos + 1] << 8);
+unsigned int get_var(unsigned char* code, unsigned int pos) {
+    return code[pos] + (code[pos + 1] << 8);
 }
 
 void write_reencoded_stream(ctx* ctx) {
     FILE *fp = NULL;
+    unsigned int dali_data_end_addr;
+    unsigned int dali_load_addr;
     unsigned int dali_sfx_src;
     unsigned int dali_src;
     unsigned int dali_dst;
     unsigned int dali_sfx_addr;
     unsigned int dali_data_end;
-    unsigned int dali_dst_end;
+    unsigned int dali_max_mem;
     unsigned int dali_data_size_hi;
     unsigned int dali_01;
     unsigned int dali_cli;
+    unsigned int dali_init_size;
+    unsigned int dali_stub_size;
+    unsigned int dali_sfx_data;
+    unsigned int dali_sfx_src_addr;
+
+    unsigned char* sfx_code_start;
+    unsigned int sfx_code_size;
+
+    const char* sfx_code_version;
+    unsigned char* sfx_code;
+    unsigned int sfx_size;
+
+    //unsigned int dali_load_addr;
     //int dali_effect_code;
 
-    unsigned int sfx_addr;
     int before_reloc = -1;
 
     //unsigned int var_dali_effect_code;
@@ -356,77 +372,101 @@ void write_reencoded_stream(ctx* ctx) {
     /* as sfx */
     if (ctx->sfx) {
         printf("Creating sfx with start-address $%04x\n", ctx->sfx_addr);
+
+        sfx_code_version = decruncher;
+        sfx_size = sizeof(decruncher);
+
         if (ctx->sfx == SFX_C64) {
             if (ctx->sfx_small) {
                 if (ctx->sfx_effect) {
-                    ctx->sfx_size = sizeof(decruncher_small_effect);
-                    /* copy over to change values in code */
-                    ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                    memcpy (ctx->sfx_code, decruncher_small_effect, ctx->sfx_size);
+                    sfx_code_version = decruncher_small_effect;
+                    sfx_size = sizeof(decruncher_small_effect);
                 } else {
-                    ctx->sfx_size = sizeof(decruncher_small);
-                    /* copy over to change values in code */
-                    ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                    memcpy (ctx->sfx_code, decruncher_small, ctx->sfx_size);
+                    sfx_code_version = decruncher_small;
+                    sfx_size = sizeof(decruncher_small);
                 }
             } else {
                 if (ctx->sfx_effect) {
-                    ctx->sfx_size = sizeof(decruncher_effect);
-                    /* copy over to change values in code */
-                    ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                    memcpy (ctx->sfx_code, decruncher_effect, ctx->sfx_size);
+                    sfx_code_version = decruncher_effect;
+                    sfx_size = sizeof(decruncher_effect);
                 } else {
-                    ctx->sfx_size = sizeof(decruncher);
-                    /* copy over to change values in code */
-                    ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                    memcpy (ctx->sfx_code, decruncher, ctx->sfx_size);
+                    sfx_code_version = decruncher;
+                    sfx_size = sizeof(decruncher);
                 }
             }
         } else if (ctx->sfx == SFX_PLUS4) {
             if (ctx->sfx_small) {
-                ctx->sfx_size = sizeof(decruncher_plus4_small);
-                /* copy over to change values in code */
-                ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                memcpy (ctx->sfx_code, decruncher_plus4_small, ctx->sfx_size);
+                sfx_code_version = decruncher_plus4_small;
+                sfx_size = sizeof(decruncher_plus4_small);
             } else {
-                ctx->sfx_size = sizeof(decruncher_plus4);
-                /* copy over to change values in code */
-                ctx->sfx_code = (unsigned char *)malloc(ctx->sfx_size);
-                memcpy (ctx->sfx_code, decruncher_plus4, ctx->sfx_size);
+                sfx_code_version = decruncher_plus4;
+                sfx_size = sizeof(decruncher_plus4);
             }
         }
-        ctx->sfx_size -= DALI_VARS_SIZE;
+
+        /* copy over to change values in code */
+        sfx_code = (unsigned char *)malloc(sfx_size);
+        memcpy (sfx_code, sfx_code_version, sfx_size);
+
+        sfx_size -= DALI_VARS_SIZE;
 
         /* fetch vars from binary */
-        sfx_addr = get_var(ctx, 0);
-        dali_sfx_src = get_var(ctx, ctx->sfx_size + POS_DALI_SFX_SRC);
-        dali_src = get_var(ctx, ctx->sfx_size + POS_DALI_SRC);
-        dali_dst = get_var(ctx, ctx->sfx_size + POS_DALI_DST);
-        dali_sfx_addr = get_var(ctx, ctx->sfx_size + POS_DALI_SFX_ADDR);
-        dali_data_end = get_var(ctx, ctx->sfx_size + POS_DALI_DATA_END);
-        dali_dst_end = get_var(ctx, ctx->sfx_size + POS_DALI_DST_END);
-        dali_data_size_hi = get_var(ctx, ctx->sfx_size + POS_DALI_DATA_SIZE_HI);
-        dali_01 = get_var(ctx, ctx->sfx_size + POS_DALI_01);
-        dali_cli = get_var(ctx, ctx->sfx_size + POS_DALI_CLI);
-        //dali_effect_code = get_var(ctx, var_dali_effect_code);
+        dali_load_addr = get_var(sfx_code, 0);
+        dali_sfx_src = get_var(sfx_code, sfx_size + POS_DALI_SFX_SRC);
+        dali_src = get_var(sfx_code, sfx_size + POS_DALI_SRC);
+        dali_dst = get_var(sfx_code, sfx_size + POS_DALI_DST);
+        dali_sfx_addr = get_var(sfx_code, sfx_size + POS_DALI_SFX_ADDR);
+        dali_data_end = get_var(sfx_code, sfx_size + POS_DALI_DATA_END);
+        dali_max_mem = get_var(sfx_code, sfx_size + POS_DALI_MAX_MEM);
+        dali_data_size_hi = get_var(sfx_code, sfx_size + POS_DALI_DATA_SIZE_HI);
+        dali_01 = get_var(sfx_code, sfx_size + POS_DALI_01);
+        dali_cli = get_var(sfx_code, sfx_size + POS_DALI_CLI);
+        dali_stub_size = get_var(sfx_code, sfx_size + POS_DALI_STUB_SIZE);
+        dali_init_size = get_var(sfx_code, sfx_size + POS_DALI_INIT_SIZE);
+        dali_sfx_data = get_var(sfx_code, sfx_size + POS_DALI_SFX_DATA);
+        //dali_load_addr = get_var(sfx_code, 0);
+        //dali_effect_code = get_var(sfx_code, var_dali_effect_code);
+
+        if (ctx->cbm_relocate_sfx_addr >= 0) {
+            dali_load_addr = ctx->cbm_relocate_sfx_addr;
+        }
+
+        sfx_code_start = sfx_code + 2;
+        sfx_code_size = sfx_size - 2;
+
+        dali_data_end_addr = dali_load_addr + dali_sfx_data + ctx->reencoded_index - 0x100;
+        dali_sfx_src_addr = dali_load_addr + dali_init_size;
+
+        if (ctx->cbm_relocate_sfx_addr >= 0) {
+            /* reduce data_end_addr and sfx_src_addr by stub size, as stub is omitted when relocated */
+            dali_data_end_addr -= dali_stub_size;
+            dali_sfx_src_addr -= dali_stub_size;
+            sfx_code_start -= dali_stub_size;
+            sfx_code_size -= dali_stub_size;
+        }
 
         /* setup jmp target after decompression */
-        ctx->sfx_code[dali_sfx_addr + 0] = ctx->sfx_addr & 0xff;
-        ctx->sfx_code[dali_sfx_addr + 1] = (ctx->sfx_addr >> 8) & 0xff;
+        sfx_code[dali_sfx_addr + 0] = ctx->sfx_addr & 0xff;
+        sfx_code[dali_sfx_addr + 1] = ctx->sfx_addr >> 8;
 
         /* setup decompression destination */
-        ctx->sfx_code[dali_dst + 0] = ctx->cbm_orig_addr & 0xff;
-        ctx->sfx_code[dali_dst + 1] = (ctx->cbm_orig_addr >> 8) & 0xff;
+        sfx_code[dali_dst + 0] = ctx->cbm_orig_addr & 0xff;
+        sfx_code[dali_dst + 1] = ctx->cbm_orig_addr >> 8;
 
         /* setup compressed data src */
-        ctx->sfx_code[dali_src + 0] = ((ctx->sfx_code[dali_dst_end + 1] * 0x100) + 0x100 - ctx->reencoded_index) & 0xff;
-        ctx->sfx_code[dali_src + 1] = (((ctx->sfx_code[dali_dst_end + 1] * 0x100) + 0x100 - ctx->reencoded_index) >> 8) & 0xff;
+        sfx_code[dali_src + 0] =  ((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) & 0xff;
+        sfx_code[dali_src + 1] = (((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) >> 8) & 0xff;
 
         /* setup compressed data end */
-        ctx->sfx_code[dali_data_end + 0] = (sfx_addr + ctx->sfx_size - 2 + ctx->reencoded_index - 0x100) & 0xff;
-        ctx->sfx_code[dali_data_end + 1] = ((sfx_addr + ctx->sfx_size - 2 + ctx->reencoded_index - 0x100) >> 8) & 0xff;
+        sfx_code[dali_data_end + 0] = dali_data_end_addr & 0xff;
+        sfx_code[dali_data_end + 1] = dali_data_end_addr >> 8;
 
-        ctx->sfx_code[dali_data_size_hi] = ctx->sfx_code[dali_dst_end + 1] - (((ctx->reencoded_index + 0x100) >> 8) & 0xff);
+        /* setup position for zp_code */
+        sfx_code[dali_sfx_src + 0] = dali_sfx_src_addr & 255;
+        sfx_code[dali_sfx_src + 1] = dali_sfx_src_addr >> 8;
+
+        /* setup value for highbyte comparision */
+        sfx_code[dali_data_size_hi] = sfx_code[dali_src + 1] - 1;
 
         if (ctx->sfx_small) {
             if (ctx->sfx_effect) {
@@ -434,40 +474,25 @@ void write_reencoded_stream(ctx* ctx) {
             }
         } else {
             if (ctx->sfx_01 < 0) ctx->sfx_01 = 0x37;
-            ctx->sfx_code[dali_01] = ctx->sfx_01;
-            if (ctx->sfx_cli) ctx->sfx_code[dali_cli] = 0x58;
+            sfx_code[dali_01] = ctx->sfx_01;
+            if (ctx->sfx_cli) sfx_code[dali_cli] = 0x58;
             if (ctx->sfx_effect) {
             } else {
             }
         }
 
         printf("original: $%04x-$%04x ($%04x) 100%%\n", (int)ctx->cbm_orig_addr, (int)ctx->cbm_orig_addr + (int)ctx->unpacked_size, (int)ctx->unpacked_size);
-        if (ctx->cbm_relocate_sfx_addr >= 0) {
-            sfx_addr = ctx->cbm_relocate_sfx_addr;
-            if (ctx->sfx_small) {
-                ctx->sfx_code[dali_sfx_src + 0] = (ctx->cbm_relocate_sfx_addr + 0xd) & 255;
-                ctx->sfx_code[dali_sfx_src + 1] = (ctx->cbm_relocate_sfx_addr + 0xd) >> 8;
-            } else {
-                ctx->sfx_code[dali_sfx_src + 0] = (ctx->cbm_relocate_sfx_addr + 0x13) & 255;
-                ctx->sfx_code[dali_sfx_src + 1] = (ctx->cbm_relocate_sfx_addr + 0x13) >> 8;
-            }
-            ctx->sfx_code[dali_data_end + 0] = (ctx->cbm_relocate_sfx_addr + ctx->sfx_size - 2 + ctx->reencoded_index - 0x100 - 0x0c) & 0xff;
-            ctx->sfx_code[dali_data_end + 1] = ((ctx->cbm_relocate_sfx_addr + ctx->sfx_size - 2 + ctx->reencoded_index - 0x100 - 0x0c) >> 8) & 0xff;
 
-            fputc(ctx->cbm_relocate_sfx_addr & 255, fp);
-            fputc(ctx->cbm_relocate_sfx_addr >> 8, fp);
+        /* write out load address */
+        fputc(dali_load_addr & 255, fp);
+        fputc(dali_load_addr >> 8, fp);
 
-            if (fwrite(ctx->sfx_code + 0xe, sizeof(char), ctx->sfx_size - 0xe, fp) != ctx->sfx_size - 0xe) {
-                fprintf(stderr, "Error: Cannot write output file %s\n", ctx->output_name);
-                exit(1);
-            }
-        } else {
-            if (fwrite(ctx->sfx_code, sizeof(char), ctx->sfx_size, fp) != ctx->sfx_size) {
-                fprintf(stderr, "Error: Cannot write output file %s\n", ctx->output_name);
-                exit(1);
-            }
+        /* write out sfx code  */
+        if (fwrite(sfx_code_start, sizeof(char), sfx_code_size, fp) != sfx_code_size) {
+            fprintf(stderr, "Error: Cannot write output file %s\n", ctx->output_name);
+             exit(1);
         }
-        printf("packed:   $%04x-$%04x ($%04x) %3.2f%%\n", sfx_addr, sfx_addr + (int)ctx->sfx_size + (int)ctx->packed_index, (int)ctx->sfx_size + (int)ctx->packed_index, ((float)(ctx->packed_index + (int)ctx->sfx_size) / (float)(ctx->unpacked_size) * 100.0));
+        printf("packed:   $%04x-$%04x ($%04x) %3.2f%%\n", dali_load_addr, dali_load_addr + (int)sfx_size + (int)ctx->packed_index, (int)sfx_size + (int)ctx->packed_index, ((float)(ctx->packed_index + (int)sfx_size) / (float)(ctx->unpacked_size) * 100.0));
     /* or standard compressed */
     } else {
         if (ctx->cbm_relocate_origin_addr >= 0 && !ctx->cbm) {
@@ -530,6 +555,7 @@ void write_reencoded_stream(ctx* ctx) {
         }
     }
 
+    /* write out compressed data, either stand alone, or appended to previously written sfx code */
     if (fwrite(ctx->reencoded_data, sizeof(char), ctx->packed_index, fp) != ctx->packed_index) {
         fprintf(stderr, "Error: Cannot write output file\n");
         exit(1);
@@ -767,7 +793,6 @@ int main(int argc, char *argv[]) {
     ctx.sfx_cli = FALSE;
     ctx.sfx_small = FALSE;
     ctx.sfx_effect = FALSE;
-    ctx.sfx_code = NULL;
     ctx.exit_on_warn = FALSE;
 
     for (i = 1; i < argc; i++) {

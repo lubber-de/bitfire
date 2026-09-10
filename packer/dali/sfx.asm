@@ -25,6 +25,8 @@
 
 !cpu 6510
 
+MAX_MEM			= $ffff
+
 BITS_LEFT		= 1
 
 .depacker_dst		= $01
@@ -47,12 +49,15 @@ BITS_LEFT		= 1
 
 		* = $0801
 .dali_code_start
+.dali_init_start
+.stub_start
                 !byte $0b,$08
 		;could place opcodes in linenumber and do sys 2051? 2049? -> anc $08 would not hurt, but $9e hurts
 		!word 1602
 		!byte $9e
 		!text "2061"
 		!byte $00,$00,$00
+.stub_end
 
 		;/!\ ATTENTION, the depacker just fits into ZP this way, if it gets larger, the copy routine will overwrite $00, as it is a 8-bit address sta
 		sei
@@ -79,7 +84,7 @@ sfx_src = * + 1
 		;------------------
 		;depacker starts here
 		;------------------
-.dali_code_end
+.dali_init_end
 .depacker_code
 !pseudopc .depacker_dst {
 .depacker_start
@@ -101,8 +106,7 @@ lz_01 = * + 1
                 dey
 lz_data_end = * + 1
 .src		lda $beef,y
-lz_dst_end = * + 1
-.dst		sta $ff00,y
+.dst		sta MAX_MEM & $ff00,y
                 tya				;annoying, but need to copy from $ff ... $00
                 bne -
 
@@ -359,41 +363,46 @@ lz_sfx_addr = * + 1
 		jmp $0000
 .depacker_end
 }
+.sfx_data
 
 !ifdef .second_pass {				;emmit warnings only once in second pass
 !ifdef SFX_FAST {
 !warn "zp saved/restored up to: ",.restore_end - .depacker_dst
 }
 !warn "sfx zp size: ", .depacker_end - .depacker_start
-!warn "sfx size: ", * - .dali_code_start
+!warn "sfx size: ", * - .dali_init_start
 }
 .second_pass
 
-.smc_offsetd 		= .depacker_dst - (.dali_code_end - .dali_code_start)
+.init_offset		= .dali_code_start
+.zp_code_offset		= .depacker_dst - (.depacker_code - .dali_code_start)
 .vars_start
-!word sfx_src		- .dali_code_start + 2
-!word lz_src 		- .smc_offsetd + 2
-!word lz_dst		- .smc_offsetd + 2
-!word lz_sfx_addr	- .smc_offsetd + 2
-!word lz_data_end	- .smc_offsetd + 2
-!word lz_dst_end	- .smc_offsetd + 2
-!word lz_data_size_hi	- .smc_offsetd + 2
+!word sfx_src		- .init_offset + 2
+!word lz_src 		- .zp_code_offset + 2
+!word lz_dst		- .zp_code_offset + 2
+!word lz_sfx_addr	- .zp_code_offset + 2
+!word lz_data_end	- .zp_code_offset + 2
+!word MAX_MEM					;max_mem
+!word lz_data_size_hi	- .zp_code_offset + 2
 !ifdef SFX_FAST {
-!word lz_01		- .smc_offsetd + 2
-!word lz_cli		- .smc_offsetd + 2
+!word lz_01		- .zp_code_offset + 2
+!word lz_cli		- .zp_code_offset + 2
 } else {
 !word $ffff
 !word $ffff
 }
 !ifdef SFX_EFFECT {
-!word lz_effect		- .smc_offsetd + 2
+!word lz_effect		- .zp_code_offset + 2
 } else {
 !word $ffff
 }
+!word .stub_end - .stub_start			;stub size
+!word .dali_init_end - .dali_init_start - 1	;init code size
+!word .sfx_data - .dali_code_start		;start of compressed data 
 .vars_end
 
 ;DALI_VARS_SIZE = .vars_end - .vars_start
-;DALI_VARS = .vars_start - .dali_code_start
+;DALI_VARS = .vars_start - .dali_init_start
 ;DALI_SFX_SRC = DALI_VARS + 0
 ;DALI_SRC = DALI_VARS + 2
 ;DALI_DST = DALI_VARS + 4
