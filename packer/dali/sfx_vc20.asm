@@ -25,7 +25,7 @@
 
 !cpu 6510
 
-MAX_MEM			= $fcff
+MAX_MEM			= $7fff
 
 BITS_LEFT		= 1
 
@@ -47,21 +47,19 @@ BITS_LEFT		= 1
 	}
 }
 
-		* = $1001
+		* = $1201
 .dali_code_start
 .dali_init_start
 .stub_start
-                !byte $0b,$10
-		;could place opcodes in linenumber and do sys 2051? 2049? -> anc $08 would not hurt, but $9e hurts
-		!word 4109
+                !byte $0b,$12
+		!word 1264
 		!byte $9e
-		!text "4109"
+		!text "4621"
 		!byte $00,$00,$00
 .stub_end
 
 		;/!\ ATTENTION, the depacker just fits into ZP this way, if it gets larger, the copy routine will overwrite $00, as it is a 8-bit address sta
 		sei
-		sta $ff3f
 !ifdef SFX_FAST {
 		;full zp code will be copied, but later less bytes will be copied back
 		ldx #<(.depacker_end - .restore_end)
@@ -79,6 +77,7 @@ sfx_src = * + 1
 		stx <.depacker_dst - 1,y
 		dey
 		bne -
+		jam
                 jmp .depack
 
 		;------------------
@@ -345,7 +344,6 @@ lz_eof
 		bne -
 		pha				;end up with SP = $ff, let's be nice :-)
 }
-		sta $ff3e
 lz_sfx_addr = * + 1
 		jmp $0000
 .depacker_end

@@ -29,6 +29,7 @@
 
 #define SFX_C64			1
 #define SFX_PLUS4		2
+#define SFX_VC20		3
 
 //include salvador and rename main
 #define main salvador_main
@@ -395,14 +396,23 @@ void write_reencoded_stream(ctx* ctx) {
                 }
             }
         } else if (ctx->sfx == SFX_PLUS4) {
-            if (ctx->sfx_small) {
-                sfx_code_version = decruncher_plus4_small;
-                sfx_size = sizeof(decruncher_plus4_small);
-            } else {
+            //if (ctx->sfx_small) {
+            //    sfx_code_version = decruncher_plus4_small;
+            //    sfx_size = sizeof(decruncher_plus4_small);
+            //} else {
                 sfx_code_version = decruncher_plus4;
                 sfx_size = sizeof(decruncher_plus4);
-            }
+            //}
+        } else if (ctx->sfx == SFX_VC20) {
+            //if (ctx->sfx_small) {
+            //    sfx_code_version = decruncher_plus4_small;
+            //    sfx_size = sizeof(decruncher_plus4_small);
+            //} else {
+                sfx_code_version = decruncher_vc20;
+                sfx_size = sizeof(decruncher_vc20);
+            //}
         }
+
 
         /* copy over to change values in code */
         sfx_code = (unsigned char *)malloc(sfx_size);
@@ -411,7 +421,6 @@ void write_reencoded_stream(ctx* ctx) {
         sfx_size -= DALI_VARS_SIZE;
 
         /* fetch vars from binary */
-        dali_load_addr = get_var(sfx_code, 0);
         dali_sfx_src = get_var(sfx_code, sfx_size + POS_DALI_SFX_SRC);
         dali_src = get_var(sfx_code, sfx_size + POS_DALI_SRC);
         dali_dst = get_var(sfx_code, sfx_size + POS_DALI_DST);
@@ -424,11 +433,12 @@ void write_reencoded_stream(ctx* ctx) {
         dali_stub_size = get_var(sfx_code, sfx_size + POS_DALI_STUB_SIZE);
         dali_init_size = get_var(sfx_code, sfx_size + POS_DALI_INIT_SIZE);
         dali_sfx_data = get_var(sfx_code, sfx_size + POS_DALI_SFX_DATA);
-        //dali_load_addr = get_var(sfx_code, 0);
         //dali_effect_code = get_var(sfx_code, var_dali_effect_code);
 
         if (ctx->cbm_relocate_sfx_addr >= 0) {
             dali_load_addr = ctx->cbm_relocate_sfx_addr;
+        } else {
+            dali_load_addr = get_var(sfx_code, 0);
         }
 
         sfx_code_start = sfx_code + 2;
@@ -454,8 +464,8 @@ void write_reencoded_stream(ctx* ctx) {
         sfx_code[dali_dst + 1] = ctx->cbm_orig_addr >> 8;
 
         /* setup compressed data src */
-        sfx_code[dali_src + 0] =  ((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) & 0xff;
-        sfx_code[dali_src + 1] = (((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) >> 8) & 0xff;
+        sfx_code[dali_src + 0] = ((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) & 0xff;
+        sfx_code[dali_src + 1] = ((dali_max_mem & 0xff00) + 0x100 - ctx->reencoded_index) >> 8;
 
         /* setup compressed data end */
         sfx_code[dali_data_end + 0] = dali_data_end_addr & 0xff;
@@ -843,13 +853,20 @@ int main(int argc, char *argv[]) {
             } else if (!strcmp(argv[i], "--cli")) {
                 ctx.sfx_cli = TRUE;
             } else if (!strcmp(argv[i], "--sfx")) {
+                if (ctx.sfx) fprintf(stderr, "Error: Multiple sfx-types given %s\n", argv[i]);
                 ctx.sfx_addr = read_number(argv[i + 1], argv[i], 65536);
                 i++;
                 ctx.sfx = SFX_C64;
             } else if (!strcmp(argv[i], "--sfx_plus4")) {
+                if (ctx.sfx) fprintf(stderr, "Error: Multiple sfx-types given %s\n", argv[i]);
                 ctx.sfx_addr = read_number(argv[i + 1], argv[i], 65536);
                 i++;
                 ctx.sfx = SFX_PLUS4;
+            } else if (!strcmp(argv[i], "--sfx_vc20")) {
+                if (ctx.sfx) fprintf(stderr, "Error: Multiple sfx-types given %s\n", argv[i]);
+                ctx.sfx_addr = read_number(argv[i + 1], argv[i], 65536);
+                i++;
+                ctx.sfx = SFX_VC20;
             } else if (!strcmp(argv[i], "-o")) {
                 i++;
                 ctx.output_name = argv[i];
@@ -874,10 +891,11 @@ int main(int argc, char *argv[]) {
                         "  -o [filename]               Set output filename.\n"
                         "  --sfx [num]                 Create a c64 compatible sfx-executable.\n"
                         "  --sfx_plus4 [num]           Create a plus4 compatible sfx-executable.\n"
-                        "  --01 [num]                  Set 01 to [num] after sfx.\n"
-                        "  --cli [num]                 Do a CLI after sfx, default is SEI.\n"
-                        "  --small                     Use a very small depacker that fits into zeropage, but --01 and --cli are ignored and it trashes zeropage (!)\n"
-                        "  --effect                    A very simple decrunch effect is applied\n"
+                        "  --sfx_vc20 [num]            Create a vc20 compatible sfx-executable.\n"
+                        "  --01 [num]                  Set 01 to [num] after sfx. (c64 sfx only)\n"
+                        "  --cli [num]                 Do a CLI after sfx, default is SEI. (c64 sfx only)\n"
+                        "  --effect                    A very simple decrunch effect is applied. (c64 sfx only)\n"
+                        "  --small                     Use a very small depacker that fits into zeropage, but --01 and --cli are ignored and it trashes zeropage (!) (c64 sfx only)\n"
                         "  --inplace                   Explicitely enable inplace-decompression (overwrites default).\n"
                         "  --no-inplace                Explicitely disable inplace-decompression (overwrites default).\n"
                         "  --binfile                   Input file is a raw binary without load-address.\n"
@@ -908,6 +926,18 @@ int main(int argc, char *argv[]) {
     }
     if (!ctx.sfx && ctx.sfx_01 >= 0) {
         fprintf(stderr, "Info: No sfx, ignoring --01 option\n");
+    }
+    if (ctx.sfx > SFX_C64 && ctx.sfx_01 >= 0) {
+        fprintf(stderr, "Info: ignoring --01 option for plus4/vc20 sfx\n");
+    }
+    if (ctx.sfx > SFX_C64 && ctx.sfx_cli) {
+        fprintf(stderr, "Info: ignoring --cli option for plus4/vc20 sfx\n");
+    }
+    if (ctx.sfx > SFX_C64 && ctx.sfx_small) {
+        fprintf(stderr, "Info: ignoring --small option for plus4/vc20 sfx\n");
+    }
+    if (ctx.sfx > SFX_C64 && ctx.sfx_effect) {
+        fprintf(stderr, "Info: ignoring --effect option for plus4/vc20 sfx\n");
     }
     if (!ctx.sfx && ctx.sfx_cli) {
         fprintf(stderr, "Info: No sfx, ignoring --cli option\n");

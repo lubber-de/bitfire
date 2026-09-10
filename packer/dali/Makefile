@@ -48,7 +48,7 @@ all: dali
 #
 #dali: dali.o $(DALI_OBJS)
 
-dali: dali.c $(SALVADOR_SRC) sfx.h
+dali: dali.c $(SALVADOR_SRC) sfx.h Makefile
 	@echo "Building dali..."
 	$(VR)$(CC) dali.c $(SALVADOR_SRC) $(DALI_CFLAGS) -o $@
 ifdef win
@@ -65,7 +65,7 @@ testfile.lz: ../../benchmark/files/b dali
 example.prg: example.asm dali dzx0_dali.asm testfile.lz
 	$(VR)$(ACME) $(ACME_OPTS) -o $@ $<
 
-sfx.h: sfx.asm sfx_plus4.asm
+sfx.h: sfx.asm sfx_plus4.asm Makefile
 	@echo "Creating sfx.h..."
 	$(VR)$(ACME) $(ACME_OPTS) -DSFX_EFFECT=1 -DSFX_SMALL=1 -o $(basename $@) $<
 	$(VR)echo 'static const char decruncher_small_effect[] = {' > $@
@@ -91,14 +91,15 @@ sfx.h: sfx.asm sfx_plus4.asm
 	$(VR)hexdump -ve '1/1 "0x%.2x,"' $(basename $@) | sed -e 's/,$$/+/g' -e 's/.\{50\}/&+/g' | tr -s '+' '\n' | sed 's/^/&    /g' >> $@
 	$(VR)echo '};' >> $@
 
-	$(VR)$(ACME) $(ACME_OPTS) -DSFX_SMALL=1 -o $(basename $@) sfx_plus4.asm
-	$(VR)echo 'static const char decruncher_plus4_small[] = {' >> $@
+	$(VR)$(ACME) $(ACME_OPTS) -DSFX_FAST=1 -o $(basename $@) sfx_plus4.asm
+	$(VR)echo 'static const char decruncher_plus4[] = {' >> $@
 	@#create a hexdump, add a marker (+) where lines are truncated (each 50 chars = 8 bytes per line), substitute marker (+) with newline (use tr here, as bsd-sed fails on \n), add identation to each line
 	$(VR)hexdump -ve '1/1 "0x%.2x,"' $(basename $@) | sed -e 's/,$$/+/g' -e 's/.\{50\}/&+/g' | tr -s '+' '\n' | sed 's/^/&    /g' >> $@
 	$(VR)echo '};' >> $@
+	@rm $(basename $@)
 
-	$(VR)$(ACME) $(ACME_OPTS) -DSFX_FAST=1 -o $(basename $@) sfx_plus4.asm
-	$(VR)echo 'static const char decruncher_plus4[] = {' >> $@
+	$(VR)$(ACME) $(ACME_OPTS) -DSFX_FAST=1 -o $(basename $@) sfx_vc20.asm
+	$(VR)echo 'static const char decruncher_vc20[] = {' >> $@
 	@#create a hexdump, add a marker (+) where lines are truncated (each 50 chars = 8 bytes per line), substitute marker (+) with newline (use tr here, as bsd-sed fails on \n), add identation to each line
 	$(VR)hexdump -ve '1/1 "0x%.2x,"' $(basename $@) | sed -e 's/,$$/+/g' -e 's/.\{50\}/&+/g' | tr -s '+' '\n' | sed 's/^/&    /g' >> $@
 	$(VR)echo '};' >> $@

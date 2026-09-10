@@ -64,7 +64,7 @@ BITS_LEFT		= 1
 
 !ifdef SFX_FAST {
 		;full zp code will be copied, but later less bytes will be copied back
-		ldx #<($100 + (.depacker_end - .restore_end))
+		ldx #<(.depacker_end - .restore_end)
 		txs
 
 }
